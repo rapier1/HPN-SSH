@@ -209,7 +209,7 @@ stop_and_join_pregen_threads(struct ssh_chacha_ctr_ctx_mt *c)
 	}
 	for (i = 0; i < cipher_threads; i++) {
 		if (pthread_kill(c->tid[i], 0) != 0)
-			debug3("AES-CTR MT pthread_join failure: Invalid thread id %lu in %s", c->tid[i], __FUNCTION__);
+			debug3("Chacha20 MT pthread_join failure: Invalid thread id %lu in %s", c->tid[i], __FUNCTION__);
 		else {
 			debug ("Joining %lu (%d, %d)", c->tid[i], c->struct_id, c->id[i]);
 			pthread_join(c->tid[i], NULL);
@@ -234,15 +234,15 @@ stop_and_join_pregen_threads(struct ssh_chacha_ctr_ctx_mt *c)
 static void *
 thread_loop(void *x)
 {
-	EVP_CIPHER_CTX *aesni_ctx;
+	EVP_CIPHER_CTX *chacha_ctx;
 	struct ssh_chacha_ctr_ctx_mt *c = x;
 	struct kq *q;
 	int i;
 	int qidx;
 	pthread_t first_tid;
 	int outlen;
-	u_char mynull[AES_BLOCK_SIZE];
-	memset(&mynull, 0, AES_BLOCK_SIZE);
+	u_char mynull[CHACHA_BLOCKSIZE];
+	memset(&mynull, 0, CHACHA_BLOCKSIZE);
 
 	/* get the thread id to see if this is the first one */
 	pthread_rwlock_rdlock(&c->tid_lock);
@@ -250,20 +250,30 @@ thread_loop(void *x)
 	pthread_rwlock_unlock(&c->tid_lock);
 
 	/* create the context for this thread */
-	aesni_ctx = EVP_CIPHER_CTX_new();
-
-	/* initialize the cipher ctx with the key provided
-	 * determinbe which cipher to use based on the key size */
-	if (c->keylen == 256)
-		EVP_EncryptInit_ex(aesni_ctx, EVP_aes_256_ctr(), NULL, c->orig_key, NULL);
-	else if (c->keylen == 128)
-		EVP_EncryptInit_ex(aesni_ctx, EVP_aes_128_ctr(), NULL, c->orig_key, NULL);
-	else if (c->keylen == 192)
-		EVP_EncryptInit_ex(aesni_ctx, EVP_aes_192_ctr(), NULL, c->orig_key, NULL);
-	else {
-		logit("Invalid key length of %d in AES CTR MT. Exiting", c->keylen);
+	if (!(chacha = EVP_CIPHER_CTX_new())) {
+		logit("error with creating chacha context. Exiting");
 		exit(1);
 	}
+
+	// /* initialize the cipher ctx with the key provided
+	//  * determinbe which cipher to use based on the key size */
+	// if (c->keylen == 256)
+	// 	EVP_EncryptInit_ex(aesni_ctx, EVP_aes_256_ctr(), NULL, c->orig_key, NULL);
+	// else if (c->keylen == 128)
+	// 	EVP_EncryptInit_ex(aesni_ctx, EVP_aes_128_ctr(), NULL, c->orig_key, NULL);
+	// else if (c->keylen == 192)
+	// 	EVP_EncryptInit_ex(aesni_ctx, EVP_aes_192_ctr(), NULL, c->orig_key, NULL);
+	// else {
+	// 	logit("Invalid key length of %d in AES CTR MT. Exiting", c->keylen);
+	// 	exit(1);
+	// }
+	
+	// initialize cipher ctx with provided key???
+  if (1 != EVP_EncryptInit_ex(chacha_ctx, EVP_chacha20(), NULL, c->orig_key, NULL)) {
+		logit("error with intializing chacha cipher. Exiting");
+		exit(1);
+	}
+
 
 	/*
 	 * Handle the special case of startup, one thread must fill
