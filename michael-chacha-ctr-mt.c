@@ -37,6 +37,9 @@
 #define MAX_THREADS      6
 #define MAX_NUMKQ        (MAX_THREADS * 4)
 
+// chacha block is 16 32-bit words
+#define CHACHA_BLOCKSIZE 16
+
 /* Number of pregen threads to use */
 /* this is a default value. The actual number is
  * determined during init as a function of the number
@@ -77,7 +80,7 @@ int numkq = 8;
 #define HAVE_IV         2
 int X = 0;
 
-const EVP_CIPHER *evp_aes_ctr_mt(void);
+const EVP_CIPHER *evp_chacha_ctr_mt(void);
 
 /* Keystream Queue state */
 enum {
@@ -89,18 +92,19 @@ enum {
 };
 
 /* Keystream Queue struct */
+// commented out padding
 struct kq {
-	u_char		keys[KQLEN][AES_BLOCK_SIZE]; /* 8192 x 16B */
-	u_char		ctr[AES_BLOCK_SIZE]; /* 16B */
-	u_char          pad0[CACHELINE_LEN];
+	u_char		keys[KQLEN][CHACHA_BLOCKSIZE]; /* 8192 x 16B */
+	u_char		ctr[CHACHA_BLOCKSIZE]; /* 16B */
+	// u_char          pad0[CACHELINE_LEN];
 	pthread_mutex_t	lock;
 	pthread_cond_t	cond;
 	int             qstate;
-	u_char          pad1[CACHELINE_LEN];
+	// u_char          pad1[CACHELINE_LEN];
 };
 
 /* Context struct */
-struct ssh_aes_ctr_ctx_mt
+struct ssh_chacha_ctr_ctx_mt
 {
 	int             struct_id;
 	int             keylen;
@@ -109,7 +113,7 @@ struct ssh_aes_ctr_ctx_mt
 	int		ridx;
 	int             id[MAX_THREADS]; /* 6 */
 	const u_char    *orig_key;
-  u_int input[16];	// from original chacha struct
+  u_int input[CHACHA_BLOCKSIZE];	// from original chacha struct
 	pthread_t	tid[MAX_THREADS]; /* 6 */
 	pthread_rwlock_t tid_lock;
 	struct kq	q[MAX_NUMKQ]; /* 24 */
@@ -168,7 +172,7 @@ thread_loop_cleanup(void *x)
 //  * when the main process join()-s the cancelled thread.
 //  */
 // static void
-// thread_loop_check_exit(struct ssh_aes_ctr_ctx_mt *c)
+// thread_loop_check_exit(struct ssh_chacha_ctr_ctx_mt *c)
 // {
 // 	int exit_flag;
 
@@ -187,7 +191,7 @@ thread_loop_cleanup(void *x)
  * Helper function to terminate the helper threads
  */
 static void
-stop_and_join_pregen_threads(struct ssh_aes_ctr_ctx_mt *c)
+stop_and_join_pregen_threads(struct ssh_chacha_ctr_ctx_mt *c)
 {
 	int i;
 
@@ -231,7 +235,7 @@ static void *
 thread_loop(void *x)
 {
 	EVP_CIPHER_CTX *aesni_ctx;
-	struct ssh_aes_ctr_ctx_mt *c = x;
+	struct ssh_chacha_ctr_ctx_mt *c = x;
 	struct kq *q;
 	int i;
 	int qidx;
@@ -368,7 +372,7 @@ ssh_aes_ctr(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
 	} ptrs_t;
 	ptrs_t destp, srcp, bufp;
 	uintptr_t align;
-	struct ssh_aes_ctr_ctx_mt *c;
+	struct ssh_chacha_ctr_ctx_mt *c;
 	struct kq *q, *oldq;
 	int ridx;
 	u_char *buf;
@@ -455,7 +459,7 @@ static int
 ssh_aes_ctr_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
     int enc)
 {
-	struct ssh_aes_ctr_ctx_mt *c;
+	struct ssh_chacha_ctr_ctx_mt *c;
 	int i;
 
  	/* get the number of cores in the system
@@ -615,7 +619,7 @@ ssh_aes_ctr_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 static int
 ssh_aes_ctr_cleanup(EVP_CIPHER_CTX *ctx)
 {
-	struct ssh_aes_ctr_ctx_mt *c;
+	struct ssh_chacha_ctr_ctx_mt *c;
 
 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) != NULL) {
 		stop_and_join_pregen_threads(c);
