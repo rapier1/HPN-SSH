@@ -76,7 +76,7 @@ struct sshcipher {
 	u_int	auth_len;
 	u_int	flags;
 #define CFLAG_CBC		(1<<0)
-#define CFLAG_CHACHAPOLY	(1<<1)
+#define CFLAG_CHACHA	(1<<1)
 #define CFLAG_AESCTR		(1<<2)
 #define CFLAG_NONE		(1<<3)
 #define CFLAG_INTERNAL		CFLAG_NONE /* Don't use "none" for packets */
@@ -110,8 +110,8 @@ static struct sshcipher ciphers[] = {
 	{ "aes192-ctr",		16, 24, 0, 0, CFLAG_AESCTR, NULL },
 	{ "aes256-ctr",		16, 32, 0, 0, CFLAG_AESCTR, NULL },
 #endif
-	{ "chacha20-poly1305@openssh.com",
-				8, 64, 0, 16, CFLAG_CHACHAPOLY, NULL },
+	{ "chacha20",
+				8, 64, 0, 16, CFLAG_CHACHA, NULL },
 	{ "none",               8, 0, 0, 0, CFLAG_NONE, NULL },
 
 	{ NULL,                 0, 0, 0, 0, 0, NULL }
@@ -177,6 +177,7 @@ cipher_reset_multithreaded(void)
 	cipher_by_name("aes128-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes192-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes256-ctr")->evptype = evp_aes_ctr_mt;
+	cipher_by_name("chacha20")->evptype = evp_chacha_ctr_mt;
 }
 #endif
 
