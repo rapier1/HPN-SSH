@@ -58,6 +58,7 @@
 
 /* for multi-threaded aes-ctr cipher */
 extern const EVP_CIPHER *evp_aes_ctr_mt(void);
+extern const EVP_CIPHER *evp_chacha_ctr_mt(void);
 
 struct sshcipher_ctx {
 	int	plaintext;
@@ -76,7 +77,7 @@ struct sshcipher {
 	u_int	auth_len;
 	u_int	flags;
 #define CFLAG_CBC		(1<<0)
-#define CFLAG_CHACHA	(1<<1)
+#define CFLAG_CHACHAPOLY	(1<<1)
 #define CFLAG_AESCTR		(1<<2)
 #define CFLAG_NONE		(1<<3)
 #define CFLAG_INTERNAL		CFLAG_NONE /* Don't use "none" for packets */
@@ -111,7 +112,7 @@ static struct sshcipher ciphers[] = {
 	{ "aes256-ctr",		16, 32, 0, 0, CFLAG_AESCTR, NULL },
 #endif
 	{ "chacha20",
-				8, 64, 0, 16, CFLAG_CHACHA, NULL },
+				8, 64, 0, 16, CFLAG_CHACHAPOLY, NULL },
 	{ "none",               8, 0, 0, 0, CFLAG_NONE, NULL },
 
 	{ NULL,                 0, 0, 0, 0, 0, NULL }
