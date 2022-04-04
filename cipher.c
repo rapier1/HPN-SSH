@@ -58,7 +58,7 @@
 
 /* for multi-threaded aes-ctr cipher */
 extern const EVP_CIPHER *evp_aes_ctr_mt(void);
-extern const EVP_CIPHER *evp_chacha_ctr_mt(void);
+extern const EVP_CIPHER *evp_chacha_mt(void);
 
 struct sshcipher_ctx {
 	int	plaintext;
@@ -111,7 +111,7 @@ static struct sshcipher ciphers[] = {
 	{ "aes192-ctr",		16, 24, 0, 0, CFLAG_AESCTR, NULL },
 	{ "aes256-ctr",		16, 32, 0, 0, CFLAG_AESCTR, NULL },
 #endif
-	{ "chacha20",
+	{ "chacha20-poly1305@openssh.com",
 				8, 64, 0, 16, CFLAG_CHACHAPOLY, NULL },
 	{ "none",               8, 0, 0, 0, CFLAG_NONE, NULL },
 
@@ -178,7 +178,8 @@ cipher_reset_multithreaded(void)
 	cipher_by_name("aes128-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes192-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes256-ctr")->evptype = evp_aes_ctr_mt;
-	cipher_by_name("chacha20")->evptype = evp_chacha_ctr_mt;
+	debug("RENAME");
+	cipher_by_name("chacha20-poly1305@openssh.com")->evptype = evp_chacha_mt;
 }
 #endif
 
