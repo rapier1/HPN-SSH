@@ -43,6 +43,7 @@
 #endif
 #include "cipher-chachapoly.h"
 #include "cipher-aesctr.h"
+#include "cipher-chacha-mt.h"
 
 #define CIPHER_ENCRYPT		1
 #define CIPHER_DECRYPT		0

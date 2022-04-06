@@ -129,7 +129,7 @@ struct chacha_ctx_mt
 
 struct chachapoly_ctx {
 	EVP_CIPHER_CTX *main_evp, *header_evp;
-};
+} chachapoly_ctx;
 
 /* <friedl>
  * increment counter 'ctr',
@@ -374,9 +374,9 @@ thread_loop(void *x)
 
 /* this is where the data is actually enciphered and deciphered */
 /* this may also benefit from upgrading to the EVP API */
-static int
-ccmt_crypt(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
-    LIBCRYPTO_EVP_INL_TYPE len)
+int
+ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *src,
+	   u_int len, u_int aadlen, u_int authlen, int do_encrypt)
 {
 	typedef union {
 #ifdef CIPHER_INT128_OK
@@ -397,7 +397,7 @@ ccmt_crypt(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
 
 	if (len == 0)
 		return 1;
-	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) == NULL)
+	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) == NULL)
 		return 0;
 
 	q = &c->q[c->qidx];
@@ -657,20 +657,20 @@ out:
 	return 0;
 }
 
-static int
-ccmt_cleanup(EVP_CIPHER_CTX *ctx)
+void
+ccmt_cleanup(struct chachapoly_ctx *ctx)
 {
 	struct chacha_ctx_mt *c;
 
 	if (ctx == NULL)
 		return 0;
 
-	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) != NULL) {
+	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) != NULL) {
 		stop_and_join_pregen_threads(c);
 
 		memset(c, 0, sizeof(*c));
 		free(c);
-		EVP_CIPHER_CTX_set_app_data(ctx, NULL);
+		EVP_CIPHER_CTX_set_app_data(ctx->main_evp, NULL);
 	}
 	EVP_CIPHER_CTX_free(ctx->main_evp);
 	EVP_CIPHER_CTX_free(ctx->header_evp);

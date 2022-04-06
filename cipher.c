@@ -322,10 +322,9 @@ cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
 	}
 	/* example of option 1 */
 	if ((cc->cipher->flags & CFLAG_CCPOLY_MT) != 0) {
-		if (ccmt_init(&cc->cp_ctx, key, keylen) != 1) {
-			ret = SSH_ERR_INVALID_ARGUMENT;
-			goto out;
-		}
+		cc->cp_ctx = ccmt_init(key, keylen);
+		ret = cc->cp_ctx != NULL ? 0 : SSH_ERR_INVALID_ARGUMENT;
+		goto out;
 	} 
 	
 	/* example of option 2 
