@@ -129,7 +129,7 @@ struct chacha_ctx_mt
 
 struct chachapoly_ctx {
 	EVP_CIPHER_CTX *main_evp, *header_evp;
-} chachapoly_ctx;
+};
 
 /* <friedl>
  * increment counter 'ctr',
@@ -249,11 +249,11 @@ thread_loop(void *x)
 	int qidx;
 	pthread_t first_tid;
 	int outlen;
-	u_char seqbuf[16];
+	//u_char seqbuf[16];
 	u_char mynull[CHACHA_BLOCKSIZE];
 
 	memset(&mynull, 0, CHACHA_BLOCKSIZE);
-	memset(&seqbuf, 0, sizeof(seqbuf));
+	//memset(&seqbuf, 0, sizeof(seqbuf));
 	
 	/* get the thread id to see if this is the first one */
 	pthread_rwlock_rdlock(&c->tid_lock);
@@ -282,16 +282,16 @@ thread_loop(void *x)
 		q = &c->q[0];
 		/* not convinced using c->ctr is correct. Need to verify against
 		 * seqnr in cipher.c */
-		POKE_U64(seqbuf + 8, q->ctr);
+		//POKE_U64(seqbuf + 8, q->ctr);
 		/* need to set the block counter as well 
 		 * do we need to track the block counter in addition to the seqnr? */
-		seqbuf[0] = 1;
+		//seqbuf[0] = 1;
 		
 		pthread_mutex_lock(&q->lock);
 		/* if we are in the INIT state then fill the queue */
 		if (q->qstate == KQINIT) {
 			/* set the initial counter */
-			EVP_CipherInit(chacha_ctx, NULL, NULL, seqbuf, 1);
+			EVP_CipherInit(chacha_ctx, NULL, NULL, q->ctr, 1);
 			for (i = 0; i < KQLEN; i++) {
 				/* encypher a block sized null string (mynull) with the key. This
 				 * returns the keystream because xoring the keystream
@@ -325,9 +325,10 @@ thread_loop(void *x)
 
 		/* Lock queue and block if its draining */
 		q = &c->q[qidx];
-		/* not convinced using c->ctr is correct. Need to verify against
+		/* not convinced using q->ctr is correct. Need to verify against
 		 * seqnr in cipher.c */
-		POKE_U64(seqbuf + 8, q->ctr);
+		/* q->ctr is already in LSB so that should be fine */
+		//POKE_U64(seqbuf + 8, q->ctr);
 
 		pthread_mutex_lock(&q->lock);
 		pthread_cleanup_push(thread_loop_cleanup, &q->lock);
@@ -353,11 +354,11 @@ thread_loop(void *x)
 		pthread_mutex_unlock(&q->lock);
 
 		/* set the initial counter */
-		EVP_EncryptInit_ex(chacha_ctx, NULL, NULL, NULL, q->ctr);
+		EVP_CipherInit(chacha_ctx, NULL, NULL, q->ctr, 1);
 
 		/* see coresponding block above for useful comments */
 		for (i = 0; i < KQLEN; i++) {
-			EVP_EncryptUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
+			EVP_CipherUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
 			ssh_ctr_inc(q->ctr, CHACHA_BLOCKSIZE);
 		}
 
@@ -540,7 +541,7 @@ ccmt_init(const u_char *key, int keylen)
 	/* set up the chacha ctx */
 	if (keylen != (32 + 32)) /* 2 x 256 bit keys */
 		goto out;
-	if ((ctx = calloc(1, sizeof(ctx))) == NULL)
+	if ((ctx = calloc(1, sizeof(*ctx))) == NULL)
 		goto out;
 	if ((ctx->main_evp = EVP_CIPHER_CTX_new()) == NULL ||
 	    (ctx->header_evp = EVP_CIPHER_CTX_new()) == NULL)
@@ -654,7 +655,7 @@ ccmt_init(const u_char *key, int keylen)
 
 	return ctx;
 out:
-	return 0;
+	return NULL;
 }
 
 void
@@ -663,7 +664,7 @@ ccmt_cleanup(struct chachapoly_ctx *ctx)
 	struct chacha_ctx_mt *c;
 
 	if (ctx == NULL)
-		return 0;
+		return;
 
 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) != NULL) {
 		stop_and_join_pregen_threads(c);
@@ -675,8 +676,6 @@ ccmt_cleanup(struct chachapoly_ctx *ctx)
 	EVP_CIPHER_CTX_free(ctx->main_evp);
 	EVP_CIPHER_CTX_free(ctx->header_evp);
 	freezero(ctx, sizeof(*ctx));
-
-	return 1;
 }
 
 
@@ -685,36 +684,39 @@ ccmt_cleanup(struct chachapoly_ctx *ctx)
 const EVP_CIPHER *
 evp_chacha_mt(void)
 {
-# if OPENSSL_VERSION_NUMBER >= 0x10100000UL
 	static EVP_CIPHER *chacha;
-	chacha = EVP_CIPHER_meth_new(NID_undef, 16/*block*/, 16/*key*/);
-	EVP_CIPHER_meth_set_iv_length(chacha, CHACHA_BLOCKSIZE);
-	EVP_CIPHER_meth_set_init(chacha, ccmt_init);
-	EVP_CIPHER_meth_set_cleanup(chacha, ccmt_cleanup);
-	EVP_CIPHER_meth_set_do_cipher(chacha, ccmt_crypt);
-#  ifndef SSH_OLD_EVP
-	EVP_CIPHER_meth_set_flags(chacha, EVP_CIPH_CBC_MODE
-				      | EVP_CIPH_VARIABLE_LENGTH
-				      | EVP_CIPH_ALWAYS_CALL_INIT
-				      | EVP_CIPH_CUSTOM_IV);
-#  endif /*SSH_OLD_EVP*/
-	return (chacha);
-# else /*earlier versions of openssl*/
-	static EVP_CIPHER chacha;
-	memset(&chacha, 0, sizeof(EVP_CIPHER));
-	chacha.nid = NID_undef;
-	chacha.block_size = CHACHA_BLOCKSIZE;
-	chacha.iv_len = CHACHA_BLOCKSIZE;
-	chacha.key_len = 16;
-	chacha.init = ccmt_init;
-	chacha.cleanup = ccmt_cleanup;
-	chacha.do_cipher = ccmt_crypt;
-#  ifndef SSH_OLD_EVP
-        chacha.flags = EVP_CIPH_CBC_MODE | EVP_CIPH_VARIABLE_LENGTH |
-		EVP_CIPH_ALWAYS_CALL_INIT | EVP_CIPH_CUSTOM_IV;
-#  endif /*SSH_OLD_EVP*/
-        return &chacha;
-# endif /*OPENSSH_VERSION_NUMBER*/
+/* # if OPENSSL_VERSION_NUMBER >= 0x10100000UL */
+/* 	static EVP_CIPHER *chacha; */
+/* 	chacha = EVP_CIPHER_meth_new(NID_undef, 16/\*block*\/, 16/\*key*\/); */
+/* 	EVP_CIPHER_meth_set_iv_length(chacha, CHACHA_BLOCKSIZE); */
+/* 	EVP_CIPHER_meth_set_init(chacha, ccmt_init); */
+/* 	EVP_CIPHER_meth_set_cleanup(chacha, ccmt_cleanup); */
+/* 	EVP_CIPHER_meth_set_do_cipher(chacha, ccmt_crypt); */
+/* #  ifndef SSH_OLD_EVP */
+/* 	EVP_CIPHER_meth_set_flags(chacha, EVP_CIPH_CBC_MODE */
+/* 				      | EVP_CIPH_VARIABLE_LENGTH */
+/* 				      | EVP_CIPH_ALWAYS_CALL_INIT */
+/* 				      | EVP_CIPH_CUSTOM_IV); */
+/* #  endif /\*SSH_OLD_EVP*\/ */
+/* 	return (chacha); */
+/* # else /\*earlier versions of openssl*\/ */
+/* 	static EVP_CIPHER chacha; */
+/* 	memset(&chacha, 0, sizeof(EVP_CIPHER)); */
+/* 	chacha.nid = NID_undef; */
+/* 	chacha.block_size = CHACHA_BLOCKSIZE; */
+/* 	chacha.iv_len = CHACHA_BLOCKSIZE; */
+/* 	chacha.key_len = 16; */
+/* 	chacha.init = ccmt_init; */
+/* 	chacha.cleanup = ccmt_cleanup; */
+/* 	chacha.do_cipher = ccmt_crypt; */
+/* #  ifndef SSH_OLD_EVP */
+/*         chacha.flags = EVP_CIPH_CBC_MODE | EVP_CIPH_VARIABLE_LENGTH | */
+/* 		EVP_CIPH_ALWAYS_CALL_INIT | EVP_CIPH_CUSTOM_IV; */
+/* #  endif /\*SSH_OLD_EVP*\/ */
+/*         return &chacha; */
+/* # endif /\*OPENSSH_VERSION_NUMBER*\/ */
+       
+	return chacha;
 }
 
 #endif /* defined(WITH_OPENSSL) */
