@@ -5,6 +5,8 @@
  * Based off of code written by Chris Rapier
  */
 #include "includes.h"
+#include "cipher-chacha-mt.h"
+#include "cipher-chachapoly.h"
 
 #if defined(WITH_OPENSSL)
 #include <sys/types.h>
@@ -104,7 +106,7 @@ struct kq {
 };
 
 /* Context struct */
-struct ssh_chacha_ctx_mt
+struct chacha_ctx_mt
 {
 	int              struct_id;
 	int              keylen;
@@ -114,6 +116,7 @@ struct ssh_chacha_ctx_mt
 	int              id[MAX_THREADS]; /* 6 */
 	u_int            chacha_key[16];
 	const u_char     *orig_key;
+/* need to move the counter to seqbuf */ 
 	u_char           chacha_counter[CHACHA_BLOCKSIZE];	// from original chacha struct
 	pthread_t	 tid[MAX_THREADS]; /* 6 */
 	pthread_rwlock_t tid_lock;
@@ -122,6 +125,10 @@ struct ssh_chacha_ctx_mt
 // 	pthread_rwlock_t stop_lock;
 // 	int		exit_flag;
 // #endif /* __APPLE__ */
+};
+
+struct chachapoly_ctx {
+	EVP_CIPHER_CTX *main_evp, *header_evp;
 };
 
 /* <friedl>
@@ -173,7 +180,7 @@ thread_loop_cleanup(void *x)
 //  * when the main process join()-s the cancelled thread.
 //  */
 // static void
-// thread_loop_check_exit(struct ssh_chacha_ctr_ctx_mt *c)
+// thread_loop_check_exit(struct chacha_ctx_mt *c)
 // {
 // 	int exit_flag;
 
@@ -192,7 +199,7 @@ thread_loop_cleanup(void *x)
  * Helper function to terminate the helper threads
  */
 static void
-stop_and_join_pregen_threads(struct ssh_chacha_ctx_mt *c)
+stop_and_join_pregen_threads(struct chacha_ctx_mt *c)
 {
 	int i;
 
@@ -236,32 +243,34 @@ static void *
 thread_loop(void *x)
 {
 	EVP_CIPHER_CTX *chacha_ctx;
-	struct ssh_chacha_ctx_mt *c = x;
+	struct chacha_ctx_mt *c = x;
 	struct kq *q;
 	int i;
 	int qidx;
 	pthread_t first_tid;
 	int outlen;
+	u_char seqbuf[16];
 	u_char mynull[CHACHA_BLOCKSIZE];
-	memset(&mynull, 0, CHACHA_BLOCKSIZE);
 
+	memset(&mynull, 0, CHACHA_BLOCKSIZE);
+	memset(&seqbuf, 0, sizeof(seqbuf));
+	
 	/* get the thread id to see if this is the first one */
 	pthread_rwlock_rdlock(&c->tid_lock);
 	first_tid = c->tid[0];
 	pthread_rwlock_unlock(&c->tid_lock);
 
 	/* create the context for this thread */
-	if (!(chacha_ctx = EVP_CIPHER_CTX_new())) {
-		logit("error with creating chacha context. Exiting");
-		exit(1);
-	}
+	/* if (!(chacha_ctx = EVP_CIPHER_CTX_new())) { */
+	/* 	logit("error with creating chacha context. Exiting"); */
+	/* 	exit(1); */
+	/* } */
 
 	// initialize cipher ctx with provided key???
-	if (1 != EVP_EncryptInit_ex(chacha_ctx, EVP_chacha20(), NULL, c->orig_key, NULL)) {
-		logit("error with intializing chacha cipher. Exiting");
-		exit(1);
-	}
-
+	/* if (1 != EVP_CipherInit_ex(chacha_ctx, EVP_chacha20(), NULL, c->orig_key, NULL, 1)) { */
+	/* 	logit("error with intializing chacha cipher. Exiting"); */
+	/* 	exit(1); */
+	/* } */
 
 	/*
 	 * Handle the special case of startup, one thread must fill
@@ -271,16 +280,23 @@ thread_loop(void *x)
 	if (pthread_equal(pthread_self(), first_tid)) {
 		/* get the first element of the keyque struct */
 		q = &c->q[0];
+		/* not convinced using c->ctr is correct. Need to verify against
+		 * seqnr in cipher.c */
+		POKE_U64(seqbuf + 8, q->ctr);
+		/* need to set the block counter as well 
+		 * do we need to track the block counter in addition to the seqnr? */
+		seqbuf[0] = 1;
+		
 		pthread_mutex_lock(&q->lock);
 		/* if we are in the INIT state then fill the queue */
 		if (q->qstate == KQINIT) {
 			/* set the initial counter */
-			EVP_EncryptInit_ex(chacha_ctx, NULL, NULL, NULL, q->ctr);
+			EVP_CipherInit(chacha_ctx, NULL, NULL, seqbuf, 1);
 			for (i = 0; i < KQLEN; i++) {
 				/* encypher a block sized null string (mynull) with the key. This
 				 * returns the keystream because xoring the keystream
 				 * against null returns the keystream. Store that in the appropriate queue */
-				EVP_EncryptUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
+				EVP_CipherUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
 				/* increment the counter */
 				ssh_ctr_inc(q->ctr, CHACHA_BLOCKSIZE);
 			}
@@ -309,6 +325,10 @@ thread_loop(void *x)
 
 		/* Lock queue and block if its draining */
 		q = &c->q[qidx];
+		/* not convinced using c->ctr is correct. Need to verify against
+		 * seqnr in cipher.c */
+		POKE_U64(seqbuf + 8, q->ctr);
+
 		pthread_mutex_lock(&q->lock);
 		pthread_cleanup_push(thread_loop_cleanup, &q->lock);
 		while (q->qstate == KQDRAINING || q->qstate == KQINIT) {
@@ -355,7 +375,7 @@ thread_loop(void *x)
 /* this is where the data is actually enciphered and deciphered */
 /* this may also benefit from upgrading to the EVP API */
 static int
-ssh_chacha(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
+ccmt_crypt(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
     LIBCRYPTO_EVP_INL_TYPE len)
 {
 	typedef union {
@@ -370,7 +390,7 @@ ssh_chacha(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
 	} ptrs_t;
 	ptrs_t destp, srcp, bufp;
 	uintptr_t align;
-	struct ssh_chacha_ctx_mt *c;
+	struct chacha_ctx_mt *c;
 	struct kq *q, *oldq;
 	int ridx;
 	u_char *buf;
@@ -453,11 +473,11 @@ ssh_chacha(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src,
 	return 1;
 }
 
-static int
-ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
-    int enc)
+struct chachapoly_ctx *
+ccmt_init(const u_char *key, int keylen)
 {
-	struct ssh_chacha_ctx_mt *c;
+	struct chachapoly_ctx *ctx;
+	struct chacha_ctx_mt *c;
 	int i;
 
  	/* get the number of cores in the system
@@ -504,12 +524,6 @@ ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 	if (cc20_threads < 2)
  		cc20_threads = 2;
 
- 	/* assure that we aren't trying to create more threads */
- 	/* than we have in the struct. cipher_threads is half the */
- 	/* total of allowable threads hence the odd looking math here */
- 	//if (cc20_threads * 2 > MAX_THREADS)
- 	//	cc20_threads = MAX_THREADS / 2;
-
 	if (cc20_threads > MAX_THREADS)
 		cc20_threads = MAX_THREADS;
 
@@ -523,8 +537,27 @@ ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 
 	debug("Starting %d threads and %d queues\n", cc20_threads, cc20_numkq);
 
+	/* set up the chacha ctx */
+	if (keylen != (32 + 32)) /* 2 x 256 bit keys */
+		goto out;
+	if ((ctx = calloc(1, sizeof(ctx))) == NULL)
+		goto out;
+	if ((ctx->main_evp = EVP_CIPHER_CTX_new()) == NULL ||
+	    (ctx->header_evp = EVP_CIPHER_CTX_new()) == NULL)
+		goto fail;
+	if (!EVP_CipherInit(ctx->main_evp, EVP_chacha20(), key, NULL, 1))
+		goto fail;
+	if (!EVP_CipherInit(ctx->header_evp, EVP_chacha20(), key + 32, NULL, 1))
+		goto fail;
+	if (EVP_CIPHER_CTX_iv_length(ctx->header_evp) != 16)
+		goto fail;
+ fail:
+	chachapoly_free(ctx);
+	goto out;
+
+	
 	/* set up the initial state of c (our cipher stream struct) */
- 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) == NULL) {
+ 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) == NULL) {
 		c = xmalloc(sizeof(*c));
 		pthread_rwlock_init(&c->tid_lock, NULL);
 #ifdef __APPLE__
@@ -541,13 +574,15 @@ ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 		}
 
 		/* attach our struct to the context */
-		EVP_CIPHER_CTX_set_app_data(ctx, c);
+		EVP_CIPHER_CTX_set_app_data(ctx->main_evp, c);
 	}
 
 	/* we are initializing but the current structure already
-	   has an IV and key so we want to kill the existing key data
-	   and start over. This is important when we need to rekey the data stream */
-	if (c->state == (HAVE_KEY | HAVE_IV)) {
+	 *  has a key so we want to kill the existing key data
+	 *  and start over. 
+	 *  This is important when we need to rekey the data stream 
+	 */
+	if (c->state == HAVE_KEY) {
 		/* tell the pregen threads to exit */
 		stop_and_join_pregen_threads(c);
 
@@ -556,29 +591,32 @@ ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 		c->exit_flag = FALSE;
 #endif /* __APPLE__ */
 
-		/* Start over getting key & iv */
+		/* Start over getting key */
 		c->state = HAVE_NONE;
 	}
 
 	/* set the initial key for this key stream queue */
 	if (key != NULL) {
 		debug("INIT!");
-		EVP_CipherInit(key, NULL, NULL, iv, 1); /* set base of ctx */
+		//EVP_CipherInit(key, NULL, NULL, iv, 1); /* set base of ctx */
 		//chacha_set_encrypt_key(key, EVP_CIPHER_CTX_key_length(ctx) * 8,
 		//   &c->chacha_key);
 		c->orig_key = key;
-		c->keylen = EVP_CIPHER_CTX_key_length(ctx) * 8;
-		c->state |= HAVE_KEY;
+		c->keylen = EVP_CIPHER_CTX_key_length(ctx->main_evp) * 8;
+		c->state = HAVE_KEY;
 	}
 
-	/* set the IV */
-	if (iv != NULL) {
-		/* init the counter this is just a 16byte uchar */
-		memcpy(c->chacha_counter, iv, CHACHA_BLOCKSIZE);
-		c->state |= HAVE_IV;
-	}
+	/* set up the initial sequence buffer */
+	memset(c->chacha_counter, 0, CHACHA_BLOCKSIZE);
+	/* this is normally the sequence number but we can't get it
+	 * at this point. So it may be necessary to move the following
+	 * initialization block to the crypt function. That's not a huge deal
+	 * but something to keep in mind
+	 */
+	POKE_U64(c->chacha_counter + 8, 0);
+	c->chacha_counter[0] = 1;
 
-	if (c->state == (HAVE_KEY | HAVE_IV)) {
+	if (c->state == HAVE_KEY) {
 		/* Clear queues */
 		/* set the first key in the key queue to the current counter */
 		memcpy(c->q[0].ctr, c->chacha_counter, CHACHA_BLOCKSIZE);
@@ -613,13 +651,19 @@ ssh_chacha_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 			pthread_cond_wait(&c->q[0].cond, &c->q[0].lock);
 		pthread_mutex_unlock(&c->q[0].lock);
 	}
-	return 1;
+
+	return ctx;
+out:
+	return 0;
 }
 
 static int
-ssh_chacha_cleanup(EVP_CIPHER_CTX *ctx)
+ccmt_cleanup(EVP_CIPHER_CTX *ctx)
 {
-	struct ssh_chacha_ctx_mt *c;
+	struct chacha_ctx_mt *c;
+
+	if (ctx == NULL)
+		return 0;
 
 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) != NULL) {
 		stop_and_join_pregen_threads(c);
@@ -628,9 +672,15 @@ ssh_chacha_cleanup(EVP_CIPHER_CTX *ctx)
 		free(c);
 		EVP_CIPHER_CTX_set_app_data(ctx, NULL);
 	}
+	EVP_CIPHER_CTX_free(ctx->main_evp);
+	EVP_CIPHER_CTX_free(ctx->header_evp);
+	freezero(ctx, sizeof(*ctx));
+
 	return 1;
 }
 
+
+/* the following is probably unnecessary */ 
 /* <friedl> */
 const EVP_CIPHER *
 evp_chacha_mt(void)
@@ -639,9 +689,9 @@ evp_chacha_mt(void)
 	static EVP_CIPHER *chacha;
 	chacha = EVP_CIPHER_meth_new(NID_undef, 16/*block*/, 16/*key*/);
 	EVP_CIPHER_meth_set_iv_length(chacha, CHACHA_BLOCKSIZE);
-	EVP_CIPHER_meth_set_init(chacha, ssh_chacha_init);
-	EVP_CIPHER_meth_set_cleanup(chacha, ssh_chacha_cleanup);
-	EVP_CIPHER_meth_set_do_cipher(chacha, ssh_chacha);
+	EVP_CIPHER_meth_set_init(chacha, ccmt_init);
+	EVP_CIPHER_meth_set_cleanup(chacha, ccmt_cleanup);
+	EVP_CIPHER_meth_set_do_cipher(chacha, ccmt_crypt);
 #  ifndef SSH_OLD_EVP
 	EVP_CIPHER_meth_set_flags(chacha, EVP_CIPH_CBC_MODE
 				      | EVP_CIPH_VARIABLE_LENGTH
@@ -656,9 +706,9 @@ evp_chacha_mt(void)
 	chacha.block_size = CHACHA_BLOCKSIZE;
 	chacha.iv_len = CHACHA_BLOCKSIZE;
 	chacha.key_len = 16;
-	chacha.init = ssh_chacha_init;
-	chacha.cleanup = ssh_chacha_cleanup;
-	chacha.do_cipher = ssh_chacha;
+	chacha.init = ccmt_init;
+	chacha.cleanup = ccmt_cleanup;
+	chacha.do_cipher = ccmt_crypt;
 #  ifndef SSH_OLD_EVP
         chacha.flags = EVP_CIPH_CBC_MODE | EVP_CIPH_VARIABLE_LENGTH |
 		EVP_CIPH_ALWAYS_CALL_INIT | EVP_CIPH_CUSTOM_IV;
