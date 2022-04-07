@@ -418,8 +418,13 @@ cipher_crypt(struct sshcipher_ctx *cc, u_int seqnr, u_char *dest,
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
 		if (seqnr % 100000 == 0)
 			debug ("seqnr is %d", seqnr);
-		return chachapoly_crypt(cc->cp_ctx, seqnr, dest, src,
-		    len, aadlen, authlen, cc->encrypt);
+		if (cc->cipher->post_auth == 1 && len > 4095) 
+			return ccmt_crypt(cc->cp_ctx, seqnr, dest, src, 
+	 	            len, aadlen, authlen, cc->encrypt); 
+		else
+			return chachapoly_crypt(cc->cp_ctx, seqnr, dest, src,
+			    len, aadlen, authlen, cc->encrypt);
+			
 	}
 	/* how we call ccmt_crypt needs a serious think 
 	 * cp_ctx should have the mt struct appended to it

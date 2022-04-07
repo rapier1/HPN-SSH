@@ -670,8 +670,6 @@ ccmt_init(const u_char *key, int keylen)
 	POKE_U64(c->chacha_counter + 8, 0);
 	c->chacha_counter[0] = 1;
 
-	debug ("POINT 1");
-	
 	if (c->state == HAVE_KEY) {
 		/* Clear queues */
 		/* set the first key in the key queue to the current counter */
@@ -688,7 +686,6 @@ ccmt_init(const u_char *key, int keylen)
 		c->qidx = 0;
 		c->ridx = 0;
 
-		debug ("STARTING THREADS!");
 		/* Start threads */
 		for (i = 0; i < cc20_threads; i++) {
 			pthread_rwlock_wrlock(&c->tid_lock);
@@ -701,16 +698,13 @@ ccmt_init(const u_char *key, int keylen)
 				debug ("CHACHA MT spawned a thread with id %lu in %s (%d, %d)", c->tid[i], __FUNCTION__, c->struct_id, c->id[i]);
 			}
 			pthread_rwlock_unlock(&c->tid_lock);
-			debug("point 2");
 		}
 		pthread_mutex_lock(&c->q[0].lock);
-		debug ("point 3");
 		// wait for all of the threads to be initialized
 		while (c->q[0].qstate == KQINIT)
 			pthread_cond_wait(&c->q[0].cond, &c->q[0].lock);
 		pthread_mutex_unlock(&c->q[0].lock);
 	}
-	debug ("!!! INIT COMPLETE !!!");
 	
 	return ctx;
 out:
