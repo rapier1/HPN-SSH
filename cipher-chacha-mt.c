@@ -261,16 +261,16 @@ thread_loop(void *x)
 	pthread_rwlock_unlock(&c->tid_lock);
 
 	/* create the context for this thread */
-	/* if (!(chacha_ctx = EVP_CIPHER_CTX_new())) { */
-	/* 	logit("error with creating chacha context. Exiting"); */
-	/* 	exit(1); */
-	/* } */
+	if (!(chacha_ctx = EVP_CIPHER_CTX_new())) {
+		logit("error with creating chacha context. Exiting");
+		exit(1);
+	}
 
-	// initialize cipher ctx with provided key???
-	/* if (1 != EVP_CipherInit_ex(chacha_ctx, EVP_chacha20(), NULL, c->orig_key, NULL, 1)) { */
-	/* 	logit("error with intializing chacha cipher. Exiting"); */
-	/* 	exit(1); */
-	/* } */
+	/* initialize cipher ctx with provided key??? */
+	if (1 != EVP_CipherInit_ex(chacha_ctx, EVP_chacha20(), NULL, c->orig_key, NULL, 1)) {
+		logit("error with intializing chacha cipher. Exiting");
+		exit(1);
+	}
 
 	/*
 	 * Handle the special case of startup, one thread must fill
