@@ -415,9 +415,15 @@ int
 cipher_crypt(struct sshcipher_ctx *cc, u_int seqnr, u_char *dest,
    const u_char *src, u_int len, u_int aadlen, u_int authlen)
 {
+	debug ("cc pointer %p for len %d", cc, len);
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
+		/*for debugging. remove for production */
 		if (seqnr % 100000 == 0)
 			debug ("seqnr is %d", seqnr);
+		/* crypt is failing immediately on smaller packets. 
+		   I am not sure why. Are there two different cc contexts being
+		   made? Either way, this works for now. It's just a test
+		   though and shoudl be removed once crypt is working properly */
 		if (cc->cipher->post_auth == 1 && len > 4095) 
 			return ccmt_crypt(cc->cp_ctx, seqnr, dest, src, 
 	 	            len, aadlen, authlen, cc->encrypt); 

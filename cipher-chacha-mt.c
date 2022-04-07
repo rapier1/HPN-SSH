@@ -40,7 +40,8 @@
 #define MAX_NUMKQ        (MAX_THREADS * 4)
 
 // chacha block is 16 32-bit words
-#define CHACHA_BLOCKSIZE 16
+// but its 64 8 bit bytes
+#define CHACHA_BLOCKSIZE 64
 
 /* Number of pregen threads to use */
 /* this is a default value. The actual number is
@@ -97,7 +98,7 @@ enum {
 // commented out padding
 struct kq {
 	u_char		keys[KQLEN][CHACHA_BLOCKSIZE]; /* 8192 x 16B */
-	u_char		ctr[CHACHA_BLOCKSIZE]; /* 16B */
+	u_char		ctr[16]; /* 16B */
 	// u_char          pad0[CACHELINE_LEN];
 	pthread_mutex_t	lock;
 	pthread_cond_t	cond;
@@ -117,7 +118,7 @@ struct chacha_ctx_mt
 	u_int            chacha_key[16];
 	const u_char     *orig_key;
 /* need to move the counter to seqbuf */
-	u_char           chacha_counter[CHACHA_BLOCKSIZE];	// from original chacha struct
+	u_char           chacha_counter[16];	// from original chacha struct
 	pthread_t	 tid[MAX_THREADS]; /* 6 */
 	pthread_rwlock_t tid_lock;
 	struct kq	 q[MAX_NUMKQ]; /* 24 */
@@ -407,6 +408,8 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 	q = &c->q[c->qidx];
 	ridx = c->ridx;
 
+	debug("qidx: %d, ridx: %d seqnr: %d", c->qidx, c->ridx, seqnr);
+	
 	debug("CRYPT!!!");
 	
 	/* generate poly key */
@@ -447,37 +450,40 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 		bufp.u8 = buf;
 
 		/* figure out the alignment on the fly */
-#ifdef CIPHER_UNALIGNED_OK
-		align = 0;
-#else
-		align = destp.u | srcp.u | bufp.u;
-#endif
+/* #ifdef CIPHER_UNALIGNED_OK */
+/* 		align = 0; */
+/* #else */
+/* 		align = destp.u | srcp.u | bufp.u; */
+/* #endif */
 
-		/* xor the src against the key (buf)
-		 * different systems can do all 16 bytes at once or
-		 * may need to do it in 8 or 4 bytes chunks
-		 * worst case is doing it as a loop */
-#ifdef CIPHER_INT128_OK
-		if ((align & 0xf) == 0) {
-			destp.u128[0] = srcp.u128[0] ^ bufp.u128[0];
-		} else
-#endif
-		/* 64 bits */
-		if ((align & 0x7) == 0) {
-			destp.u64[0] = srcp.u64[0] ^ bufp.u64[0];
-			destp.u64[1] = srcp.u64[1] ^ bufp.u64[1];
-		/* 32 bits */
-		} else if ((align & 0x3) == 0) {
-			destp.u32[0] = srcp.u32[0] ^ bufp.u32[0];
-			destp.u32[1] = srcp.u32[1] ^ bufp.u32[1];
-			destp.u32[2] = srcp.u32[2] ^ bufp.u32[2];
-			destp.u32[3] = srcp.u32[3] ^ bufp.u32[3];
-		} else {
+/* 		/\* xor the src against the key (buf) */
+/* 		 * different systems can do all 16 bytes at once or */
+/* 		 * may need to do it in 8 or 4 bytes chunks */
+/* 		 * worst case is doing it as a loop *\/ */
+/* #ifdef CIPHER_INT128_OK */
+/* 		if ((align & 0xf) == 0) { */
+/* 			destp.u128[0] = srcp.u128[0] ^ bufp.u128[0]; */
+/* 		} else */
+/* #endif */
+/* 		/\* 64 bits *\/ */
+/* 		if ((align & 0x7) == 0) { */
+/* 			destp.u64[0] = srcp.u64[0] ^ bufp.u64[0]; */
+/* 			destp.u64[1] = srcp.u64[1] ^ bufp.u64[1]; */
+/* 		/\* 32 bits *\/ */
+/* 		} else if ((align & 0x3) == 0) { */
+/* 			destp.u32[0] = srcp.u32[0] ^ bufp.u32[0]; */
+/* 			destp.u32[1] = srcp.u32[1] ^ bufp.u32[1]; */
+/* 			destp.u32[2] = srcp.u32[2] ^ bufp.u32[2]; */
+/* 			destp.u32[3] = srcp.u32[3] ^ bufp.u32[3]; */
+/* 		} else { */
 			/*1 byte at a time*/
 			size_t i;
-			for (i = 0; i < CHACHA_BLOCKSIZE; ++i)
+			for (i = 0; i < CHACHA_BLOCKSIZE; ++i) {
 				dest[i] = src[i] ^ buf[i];
-		}
+			}
+			debug ("len %d", len);
+
+			/* } */
 
 		/* inc/decrement the pointers by the block size (16)*/
 		destp.u += CHACHA_BLOCKSIZE;
@@ -487,6 +493,7 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 		if ((ridx = (ridx + 1) % KQLEN) == 0) {
 			oldq = q;
 
+			debug ("swap!");
 			/* Mark next queue draining, may need to wait */
 			c->qidx = (c->qidx + 1) % cc20_numkq;
 			q = &c->q[c->qidx];
@@ -504,7 +511,7 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 			pthread_cond_broadcast(&oldq->cond);
 			pthread_mutex_unlock(&oldq->lock);
 		}
-	} while (len -= CHACHA_BLOCKSIZE);
+	} while (len -= CHACHA_BLOCKSIZE && len > 0);
 	c->ridx = ridx;
 
 	/* if encyrpting append tag */
