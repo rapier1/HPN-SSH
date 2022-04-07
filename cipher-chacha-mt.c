@@ -116,7 +116,7 @@ struct chacha_ctx_mt
 	int              id[MAX_THREADS]; /* 6 */
 	u_int            chacha_key[16];
 	const u_char     *orig_key;
-/* need to move the counter to seqbuf */ 
+/* need to move the counter to seqbuf */
 	u_char           chacha_counter[CHACHA_BLOCKSIZE];	// from original chacha struct
 	pthread_t	 tid[MAX_THREADS]; /* 6 */
 	pthread_rwlock_t tid_lock;
@@ -254,7 +254,7 @@ thread_loop(void *x)
 
 	memset(&mynull, 0, CHACHA_BLOCKSIZE);
 	//memset(&seqbuf, 0, sizeof(seqbuf));
-	
+
 	/* get the thread id to see if this is the first one */
 	pthread_rwlock_rdlock(&c->tid_lock);
 	first_tid = c->tid[0];
@@ -283,10 +283,10 @@ thread_loop(void *x)
 		/* not convinced using c->ctr is correct. Need to verify against
 		 * seqnr in cipher.c */
 		//POKE_U64(seqbuf + 8, q->ctr);
-		/* need to set the block counter as well 
+		/* need to set the block counter as well
 		 * do we need to track the block counter in addition to the seqnr? */
 		//seqbuf[0] = 1;
-		
+
 		pthread_mutex_lock(&q->lock);
 		/* if we are in the INIT state then fill the queue */
 		if (q->qstate == KQINIT) {
@@ -395,6 +395,9 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 	struct kq *q, *oldq;
 	int ridx;
 	u_char *buf;
+	u_char seqbuf[16]; /* layout: u64 counter || u64 seqno */
+	int r = SSH_ERR_INTERNAL_ERROR;
+	u_char expected_tag[POLY1305_TAGLEN], poly_key[POLY1305_KEYLEN];
 
 	if (len == 0)
 		return 1;
@@ -404,9 +407,41 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 	q = &c->q[c->qidx];
 	ridx = c->ridx;
 
-	/* src already padded to block multiple */
-	srcp.cu8 = src;
-	destp.u8 = dest;
+	debug("CRYPT!!!");
+	
+	/* generate poly key */
+	memset(seqbuf, 0, sizeof(seqbuf));
+	POKE_U64(seqbuf + 8, seqnr);
+	memset(poly_key, 0, sizeof(poly_key));
+	if (!EVP_CipherInit(ctx->main_evp, NULL, NULL, seqbuf, 1) ||
+	    EVP_Cipher(ctx->main_evp, poly_key,
+	    poly_key, sizeof(poly_key)) < 0) {
+		r = SSH_ERR_LIBCRYPTO_ERROR;
+		goto out;
+	}
+
+	/* check tag if decrypting */
+	if (!do_encrypt) {
+		const u_char *tag = src + aadlen + len;
+		poly1305_auth(expected_tag, src, aadlen + len, poly_key);
+		if (timingsafe_bcmp(expected_tag, tag, POLY1305_TAGLEN) != 0) {
+			r = SSH_ERR_MAC_INVALID;
+			goto out;
+		}
+	}
+
+	/* crypt additional authentciation data */
+	if (aadlen) {
+		if (!EVP_CipherInit(ctx->header_evp, NULL, NULL, seqbuf, 1) ||
+		    EVP_Cipher(ctx->header_evp, dest, src, aadlen) < 0) {
+			r = SSH_ERR_LIBCRYPTO_ERROR;
+			goto out;
+		}
+	}
+
+        /* src already padded to block multiple */
+	srcp.cu8 = src+aadlen;
+	destp.u8 = dest+aadlen;
 	do { /* do until len is 0 */
 		buf = q->keys[ridx];
 		bufp.u8 = buf;
@@ -471,7 +506,20 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 		}
 	} while (len -= CHACHA_BLOCKSIZE);
 	c->ridx = ridx;
-	return 1;
+
+	/* if encyrpting append tag */
+	if (do_encrypt) {
+		poly1305_auth(dest + aadlen + len, dest, aadlen + len,
+		    poly_key);
+	}
+	/* return errors. 0 for no error*/
+	r = 0;
+out:
+	/* zero out tags */
+	explicit_bzero(expected_tag, sizeof(expected_tag));
+	explicit_bzero(seqbuf, sizeof(seqbuf));
+	explicit_bzero(poly_key, sizeof(poly_key));
+	return r;
 }
 
 struct chachapoly_ctx *
@@ -481,6 +529,7 @@ ccmt_init(const u_char *key, int keylen)
 	struct chacha_ctx_mt *c;
 	int i;
 
+	debug ("INIT!!!");
  	/* get the number of cores in the system
 	 * peak performance seems to come with assigning half the number of
 	 * physical cores in the system. This was determined by interating
@@ -523,7 +572,7 @@ ccmt_init(const u_char *key, int keylen)
 
  	/* if they have less than 4 cores spin up 2 threads anyway */
 	if (cc20_threads < 2)
- 		cc20_threads = 2;
+		cc20_threads = 2;
 
 	if (cc20_threads > MAX_THREADS)
 		cc20_threads = MAX_THREADS;
@@ -544,19 +593,23 @@ ccmt_init(const u_char *key, int keylen)
 	if ((ctx = calloc(1, sizeof(*ctx))) == NULL)
 		goto out;
 	if ((ctx->main_evp = EVP_CIPHER_CTX_new()) == NULL ||
-	    (ctx->header_evp = EVP_CIPHER_CTX_new()) == NULL)
-		goto fail;
-	if (!EVP_CipherInit(ctx->main_evp, EVP_chacha20(), key, NULL, 1))
-		goto fail;
-	if (!EVP_CipherInit(ctx->header_evp, EVP_chacha20(), key + 32, NULL, 1))
-		goto fail;
-	if (EVP_CIPHER_CTX_iv_length(ctx->header_evp) != 16)
-		goto fail;
- fail:
-	chachapoly_free(ctx);
-	goto out;
+	    (ctx->header_evp = EVP_CIPHER_CTX_new()) == NULL) {
+		chachapoly_free(ctx);
+		goto out;
+	}
+	if (!EVP_CipherInit(ctx->main_evp, EVP_chacha20(), key, NULL, 1)) {
+		chachapoly_free(ctx);
+		goto out;
+	}
+	if (!EVP_CipherInit(ctx->header_evp, EVP_chacha20(), key + 32, NULL, 1)) {
+		chachapoly_free(ctx);
+		goto out;
+	}
+	if (EVP_CIPHER_CTX_iv_length(ctx->header_evp) != 16) {
+		chachapoly_free(ctx);
+		goto out;
+	}
 
-	
 	/* set up the initial state of c (our cipher stream struct) */
  	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) == NULL) {
 		c = xmalloc(sizeof(*c));
@@ -580,8 +633,8 @@ ccmt_init(const u_char *key, int keylen)
 
 	/* we are initializing but the current structure already
 	 *  has a key so we want to kill the existing key data
-	 *  and start over. 
-	 *  This is important when we need to rekey the data stream 
+	 *  and start over.
+	 *  This is important when we need to rekey the data stream
 	 */
 	if (c->state == HAVE_KEY) {
 		/* tell the pregen threads to exit */
@@ -617,6 +670,8 @@ ccmt_init(const u_char *key, int keylen)
 	POKE_U64(c->chacha_counter + 8, 0);
 	c->chacha_counter[0] = 1;
 
+	debug ("POINT 1");
+	
 	if (c->state == HAVE_KEY) {
 		/* Clear queues */
 		/* set the first key in the key queue to the current counter */
@@ -633,6 +688,7 @@ ccmt_init(const u_char *key, int keylen)
 		c->qidx = 0;
 		c->ridx = 0;
 
+		debug ("STARTING THREADS!");
 		/* Start threads */
 		for (i = 0; i < cc20_threads; i++) {
 			pthread_rwlock_wrlock(&c->tid_lock);
@@ -645,14 +701,17 @@ ccmt_init(const u_char *key, int keylen)
 				debug ("CHACHA MT spawned a thread with id %lu in %s (%d, %d)", c->tid[i], __FUNCTION__, c->struct_id, c->id[i]);
 			}
 			pthread_rwlock_unlock(&c->tid_lock);
+			debug("point 2");
 		}
 		pthread_mutex_lock(&c->q[0].lock);
+		debug ("point 3");
 		// wait for all of the threads to be initialized
 		while (c->q[0].qstate == KQINIT)
 			pthread_cond_wait(&c->q[0].cond, &c->q[0].lock);
 		pthread_mutex_unlock(&c->q[0].lock);
 	}
-
+	debug ("!!! INIT COMPLETE !!!");
+	
 	return ctx;
 out:
 	return NULL;
@@ -676,47 +735,6 @@ ccmt_cleanup(struct chachapoly_ctx *ctx)
 	EVP_CIPHER_CTX_free(ctx->main_evp);
 	EVP_CIPHER_CTX_free(ctx->header_evp);
 	freezero(ctx, sizeof(*ctx));
-}
-
-
-/* the following is probably unnecessary */ 
-/* <friedl> */
-const EVP_CIPHER *
-evp_chacha_mt(void)
-{
-	static EVP_CIPHER *chacha;
-/* # if OPENSSL_VERSION_NUMBER >= 0x10100000UL */
-/* 	static EVP_CIPHER *chacha; */
-/* 	chacha = EVP_CIPHER_meth_new(NID_undef, 16/\*block*\/, 16/\*key*\/); */
-/* 	EVP_CIPHER_meth_set_iv_length(chacha, CHACHA_BLOCKSIZE); */
-/* 	EVP_CIPHER_meth_set_init(chacha, ccmt_init); */
-/* 	EVP_CIPHER_meth_set_cleanup(chacha, ccmt_cleanup); */
-/* 	EVP_CIPHER_meth_set_do_cipher(chacha, ccmt_crypt); */
-/* #  ifndef SSH_OLD_EVP */
-/* 	EVP_CIPHER_meth_set_flags(chacha, EVP_CIPH_CBC_MODE */
-/* 				      | EVP_CIPH_VARIABLE_LENGTH */
-/* 				      | EVP_CIPH_ALWAYS_CALL_INIT */
-/* 				      | EVP_CIPH_CUSTOM_IV); */
-/* #  endif /\*SSH_OLD_EVP*\/ */
-/* 	return (chacha); */
-/* # else /\*earlier versions of openssl*\/ */
-/* 	static EVP_CIPHER chacha; */
-/* 	memset(&chacha, 0, sizeof(EVP_CIPHER)); */
-/* 	chacha.nid = NID_undef; */
-/* 	chacha.block_size = CHACHA_BLOCKSIZE; */
-/* 	chacha.iv_len = CHACHA_BLOCKSIZE; */
-/* 	chacha.key_len = 16; */
-/* 	chacha.init = ccmt_init; */
-/* 	chacha.cleanup = ccmt_cleanup; */
-/* 	chacha.do_cipher = ccmt_crypt; */
-/* #  ifndef SSH_OLD_EVP */
-/*         chacha.flags = EVP_CIPH_CBC_MODE | EVP_CIPH_VARIABLE_LENGTH | */
-/* 		EVP_CIPH_ALWAYS_CALL_INIT | EVP_CIPH_CUSTOM_IV; */
-/* #  endif /\*SSH_OLD_EVP*\/ */
-/*         return &chacha; */
-/* # endif /\*OPENSSH_VERSION_NUMBER*\/ */
-       
-	return chacha;
 }
 
 #endif /* defined(WITH_OPENSSL) */

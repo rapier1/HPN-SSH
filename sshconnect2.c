@@ -501,6 +501,15 @@ ssh_userauth2(struct ssh *ssh, const char *local_user,
 	if (!authctxt.success)
 		fatal("Authentication failed.");
 
+	if (ssh_packet_connection_is_on_socket(ssh)) {
+		verbose("Authenticated to %s ([%s]:%d) using \"%s\".", host,
+		    ssh_remote_ipaddr(ssh), ssh_remote_port(ssh),
+		    authctxt.method->name);
+	} else {
+		verbose("Authenticated to %s (via proxy) using \"%s\".", host,
+		    authctxt.method->name);
+	}
+
 	/*
 	 * If the user wants to use the none cipher and/or none mac, do it post authentication
 	 * and only if the right conditions are met -- both of the NONE commands
@@ -549,14 +558,6 @@ ssh_userauth2(struct ssh *ssh, const char *local_user,
 		}
 	}
 #endif
-	if (ssh_packet_connection_is_on_socket(ssh)) {
-		verbose("Authenticated to %s ([%s]:%d) using \"%s\".", host,
-		    ssh_remote_ipaddr(ssh), ssh_remote_port(ssh),
-		    authctxt.method->name);
-	} else {
-		verbose("Authenticated to %s (via proxy) using \"%s\".", host,
-		    authctxt.method->name);
-	}
 }
 
 /* ARGSUSED */

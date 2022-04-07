@@ -58,7 +58,6 @@
 
 /* for multi-threaded aes-ctr cipher */
 extern const EVP_CIPHER *evp_aes_ctr_mt(void);
-extern const EVP_CIPHER *evp_chacha_mt(void);
 
 struct sshcipher_ctx {
 	int	plaintext;
@@ -80,43 +79,44 @@ struct sshcipher {
 #define CFLAG_CHACHAPOLY	(1<<1)
 #define CFLAG_AESCTR		(1<<2)
 #define CFLAG_NONE		(1<<3)
-#define CFLAG_CCPOLY_MT         (1<<4)
+#define CFLAG_CCPOLY_MT         (1<<5)
 #define CFLAG_INTERNAL		CFLAG_NONE /* Don't use "none" for packets */
 #ifdef WITH_OPENSSL
 	const EVP_CIPHER	*(*evptype)(void);
 #else
 	void	*ignored;
 #endif
+	int     post_auth;
 };
 
 static struct sshcipher ciphers[] = {
 #ifdef WITH_OPENSSL
 #ifndef OPENSSL_NO_DES
-	{ "3des-cbc",		8, 24, 0, 0, CFLAG_CBC, EVP_des_ede3_cbc },
+	{ "3des-cbc",		8, 24, 0, 0, CFLAG_CBC, EVP_des_ede3_cbc, -1 },
 #endif
-	{ "aes128-cbc",		16, 16, 0, 0, CFLAG_CBC, EVP_aes_128_cbc },
-	{ "aes192-cbc",		16, 24, 0, 0, CFLAG_CBC, EVP_aes_192_cbc },
-	{ "aes256-cbc",		16, 32, 0, 0, CFLAG_CBC, EVP_aes_256_cbc },
-	{ "aes128-ctr",		16, 16, 0, 0, 0, EVP_aes_128_ctr },
-	{ "aes192-ctr",		16, 24, 0, 0, 0, EVP_aes_192_ctr },
-	{ "aes256-ctr",		16, 32, 0, 0, 0, EVP_aes_256_ctr }, 
+	{ "aes128-cbc",		16, 16, 0, 0, CFLAG_CBC, EVP_aes_128_cbc, -1 },
+	{ "aes192-cbc",		16, 24, 0, 0, CFLAG_CBC, EVP_aes_192_cbc, -1},
+	{ "aes256-cbc",		16, 32, 0, 0, CFLAG_CBC, EVP_aes_256_cbc, -1 },
+	{ "aes128-ctr",		16, 16, 0, 0, 0, EVP_aes_128_ctr, -1 },
+	{ "aes192-ctr",		16, 24, 0, 0, 0, EVP_aes_192_ctr, -1 },
+	{ "aes256-ctr",		16, 32, 0, 0, 0, EVP_aes_256_ctr, -1 }, 
 
 # ifdef OPENSSL_HAVE_EVPGCM
 	{ "aes128-gcm@openssh.com",
-				16, 16, 12, 16, 0, EVP_aes_128_gcm },
+	                        16, 16, 12, 16, 0, EVP_aes_128_gcm, -1 },
 	{ "aes256-gcm@openssh.com",
-				16, 32, 12, 16, 0, EVP_aes_256_gcm },
+	                        16, 32, 12, 16, 0, EVP_aes_256_gcm, -1 },
 # endif /* OPENSSL_HAVE_EVPGCM */
 #else
-	{ "aes128-ctr",		16, 16, 0, 0, CFLAG_AESCTR, NULL },
-	{ "aes192-ctr",		16, 24, 0, 0, CFLAG_AESCTR, NULL },
-	{ "aes256-ctr",		16, 32, 0, 0, CFLAG_AESCTR, NULL },
+	{ "aes128-ctr",		16, 16, 0, 0, CFLAG_AESCTR, NULL, -1 },
+	{ "aes192-ctr",		16, 24, 0, 0, CFLAG_AESCTR, NULL, -1 },
+	{ "aes256-ctr",		16, 32, 0, 0, CFLAG_AESCTR, NULL, -1 },
 #endif
 	{ "chacha20-poly1305@openssh.com",
-				8, 64, 0, 16, CFLAG_CHACHAPOLY, NULL },
-	{ "none",               8, 0, 0, 0, CFLAG_NONE, NULL },
+	                        8, 64, 0, 16, CFLAG_CHACHAPOLY, NULL, -1 },
+	{ "none",               8, 0, 0, 0, CFLAG_NONE, NULL, -1 },
 
-	{ NULL,                 0, 0, 0, 0, 0, NULL }
+	{ NULL,                 0, 0, 0, 0, 0, NULL, -1 }
 };
 
 /*--*/
@@ -179,11 +179,12 @@ cipher_reset_multithreaded(void)
 	cipher_by_name("aes128-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes192-ctr")->evptype = evp_aes_ctr_mt;
 	cipher_by_name("aes256-ctr")->evptype = evp_aes_ctr_mt;
-	debug("RENAME");
+	debug("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  RENAME");
 	/* this switch in the evp type probably isn't necessary */
-	cipher_by_name("chacha20-poly1305@openssh.com")->evptype = evp_chacha_mt;
+	/* cipher_by_name("chacha20-poly1305@openssh.com")->evptype = evp_chacha_mt; */
 	/* uncomment the following to enable the threaded cc20 methods */
-	/* cipher_by_name("chacha20-poly1305@openssh.com")->flags = CFLAG_CCPOLY_MT; */
+	cipher_by_name("chacha20-poly1305@openssh.com")->post_auth = 1;
+	//debug ("^^^^^^^^^^^^^^^^^^^   flag is set to %d", cipher_by_name("chacha20-poly1305@openssh.com")->flags);
 }
 #endif
 
@@ -222,7 +223,7 @@ cipher_ivlen(const struct sshcipher *c)
 	 */
 	/* mt specific code here */
 	return (c->iv_len != 0 ||
-		(c->flags & CFLAG_CHACHAPOLY || c->flags & CFLAG_CCPOLY_MT) != 0) ?
+		(c->flags & CFLAG_CHACHAPOLY) != 0) ?
 	    c->iv_len : c->block_size;
 }
 
@@ -308,6 +309,7 @@ cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
 	}
 
 	cc->cipher = cipher;
+	debug("!!! XXXXXXXXXXXXXXXXXXXXXXXXX  cipher flag is %d", cc->cipher->flags);
 	/* two ways we can handle this
 	   1: set a new flag type like CFLAG_CCPOLY_MT that would only 
 	      be set to cipher->flags post auth, This would be done in 
@@ -315,13 +317,15 @@ cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
 	   2: Create a global variable to give us the auth state. 
 	      This option is sloppier but *may* be easier during development
 	*/
-	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
+	if (((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) && (cc->cipher->post_auth !=1 )) {
+		debug("&&&&&&&&&&&&&&&&&&&&&&&&&&& CHACHA NORMAL");
 		cc->cp_ctx = chachapoly_new(key, keylen);
 		ret = cc->cp_ctx != NULL ? 0 : SSH_ERR_INVALID_ARGUMENT;
 		goto out;
 	}
 	/* example of option 1 */
-	if ((cc->cipher->flags & CFLAG_CCPOLY_MT) != 0) {
+	if (((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) && (cc->cipher->post_auth == 1)) {
+		debug ("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1   XXXXXXXXXXXXXXXXXXXXXXXXXXX  cipher INIT!!!");
 		cc->cp_ctx = ccmt_init(key, keylen);
 		ret = cc->cp_ctx != NULL ? 0 : SSH_ERR_INVALID_ARGUMENT;
 		goto out;
@@ -338,9 +342,11 @@ cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
 	/* 	} */
 	/* }	 */
 	if ((cc->cipher->flags & CFLAG_NONE) != 0) {
+		debug("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ WHY AM I HERE?");
 		ret = 0;
 		goto out;
 	}
+	debug("******************************************** I SHOULDN'T BE HERE!!!!");
 #ifndef WITH_OPENSSL
 	if ((cc->cipher->flags & CFLAG_AESCTR) != 0) {
 		aesctr_keysetup(&cc->ac_ctx, key, 8 * keylen, 8 * ivlen);
@@ -410,6 +416,8 @@ cipher_crypt(struct sshcipher_ctx *cc, u_int seqnr, u_char *dest,
    const u_char *src, u_int len, u_int aadlen, u_int authlen)
 {
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
+		if (seqnr % 100000 == 0)
+			debug ("seqnr is %d", seqnr);
 		return chachapoly_crypt(cc->cp_ctx, seqnr, dest, src,
 		    len, aadlen, authlen, cc->encrypt);
 	}
@@ -418,10 +426,10 @@ cipher_crypt(struct sshcipher_ctx *cc, u_int seqnr, u_char *dest,
 	 * so that should work. We need to make sure the seqnr makes sense
 	 * also we need to look at how the addlen and authlen are used in the original 
 	 * code */
-	if ((cc->cipher->flags & CFLAG_CCPOLY_MT) != 0) {
-		return ccmt_crypt(cc->cp_ctx, seqnr, dest, src,
-		    len, aadlen, authlen, cc->encrypt);
-	}
+	/* if ((cc->cipher->flags & CFLAG_CCPOLY_MT) != 0) { */
+	/* 	return ccmt_crypt(cc->cp_ctx, seqnr, dest, src, */
+	/* 	    len, aadlen, authlen, cc->encrypt); */
+	/* } */
 	if ((cc->cipher->flags & CFLAG_NONE) != 0) {
 		memcpy(dest, src, aadlen + len);
 		return 0;
