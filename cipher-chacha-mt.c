@@ -287,12 +287,15 @@ thread_loop(void *x)
 		/* need to set the block counter as well
 		 * do we need to track the block counter in addition to the seqnr? */
 		//seqbuf[0] = 1;
-
+		memset(q->ctr, 0, 16);
+		q->ctr[0] = 1;
+		
 		pthread_mutex_lock(&q->lock);
 		/* if we are in the INIT state then fill the queue */
 		if (q->qstate == KQINIT) {
 			/* set the initial counter */
 			EVP_CipherInit(chacha_ctx, NULL, NULL, q->ctr, 1);
+			int k = 0;
 			for (i = 0; i < KQLEN; i++) {
 				/* encypher a block sized null string (mynull) with the key. This
 				 * returns the keystream because xoring the keystream
@@ -300,7 +303,9 @@ thread_loop(void *x)
 				EVP_CipherUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
 				/* increment the counter */
 				ssh_ctr_inc(q->ctr, CHACHA_BLOCKSIZE);
+				k++;
 			}
+			debug ("**************** filled %d", k);
 			ssh_ctr_add(q->ctr, KQLEN * (cc20_numkq - 1), CHACHA_BLOCKSIZE);
 			q->qstate = KQDRAINING;
 			pthread_cond_broadcast(&q->cond);
@@ -358,10 +363,18 @@ thread_loop(void *x)
 		EVP_CipherInit(chacha_ctx, NULL, NULL, q->ctr, 1);
 
 		/* see coresponding block above for useful comments */
+		int k = 0;
 		for (i = 0; i < KQLEN; i++) {
 			EVP_CipherUpdate(chacha_ctx, q->keys[i], &outlen, mynull, CHACHA_BLOCKSIZE);
 			ssh_ctr_inc(q->ctr, CHACHA_BLOCKSIZE);
+			k++;
 		}
+		debug("^^^^^^^^^^^^^ filled %d", k);
+		char blah[16];
+		for (k =0; k < 16; k++)
+			debug ("counter[%d] = %u",k ,(unsigned)q->ctr[k]);
+
+		
 
 		/* Re-lock, mark full and signal consumer */
 		pthread_mutex_lock(&q->lock);
@@ -657,15 +670,15 @@ ccmt_init(const u_char *key, int keylen)
 	}
 
 	/* set the initial key for this key stream queue */
-	if (key != NULL) {
-		debug("INIT!");
-		//EVP_CipherInit(key, NULL, NULL, iv, 1); /* set base of ctx */
-		//chacha_set_encrypt_key(key, EVP_CIPHER_CTX_key_length(ctx) * 8,
-		//   &c->chacha_key);
-		c->orig_key = key;
-		c->keylen = EVP_CIPHER_CTX_key_length(ctx->main_evp) * 8;
-		c->state = HAVE_KEY;
-	}
+	//if (key != NULL) {
+	debug("INIT!");
+	//EVP_CipherInit(key, NULL, NULL, iv, 1); /* set base of ctx */
+	//chacha_set_encrypt_key(key, EVP_CIPHER_CTX_key_length(ctx) * 8,
+	//   &c->chacha_key);
+	c->orig_key = key;
+	c->keylen = EVP_CIPHER_CTX_key_length(ctx->main_evp) * 8;
+	c->state = HAVE_KEY;
+	//}
 
 	/* set up the initial sequence buffer */
 	memset(c->chacha_counter, 0, CHACHA_BLOCKSIZE);
