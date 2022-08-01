@@ -458,6 +458,7 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
         /* src already padded to block multiple */
 	srcp.cu8 = src+aadlen;
 	destp.u8 = dest+aadlen;
+    u_int len2 = len;
 	do { /* do until len is 0 */
 		buf = q->keys[ridx];
 		bufp.u8 = buf;
@@ -524,7 +525,7 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 			pthread_cond_broadcast(&oldq->cond);
 			pthread_mutex_unlock(&oldq->lock);
 		}
-	} while (len -= CHACHA_BLOCKSIZE && len > 0);
+	} while (len2 -= CHACHA_BLOCKSIZE && len2 > 0);
 	c->ridx = ridx;
 
 	/* if encyrpting append tag */
