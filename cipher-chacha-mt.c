@@ -492,7 +492,7 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 			/*1 byte at a time*/
 			size_t i;
 			for (i = 0; i < CHACHA_BLOCKSIZE; ++i) {
-				dest[i] = src[i] ^ buf[i];
+				dest[i+aadlen] = src[i+aadlen] ^ buf[i];
 			}
 			debug ("len %d", len);
 
