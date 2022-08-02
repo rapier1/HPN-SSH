@@ -415,8 +415,41 @@ ccmt_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest, const u_char *
 
 	if (len == 0)
 		return 1;
-	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) == NULL)
-		return 0;
+	if ((c = EVP_CIPHER_CTX_get_app_data(ctx->main_evp)) == NULL) {
+        // If the MT context is missing, let's generate it.
+        u_char key[64];
+        //TODO: this is a hack! It abuses undocumented OpenSSL structure definitions
+        u_char * cipherDataM = EVP_CIPHER_CTX_get_cipher_data(ctx->main_evp);
+        u_char * cipherDataH = EVP_CIPHER_CTX_get_cipher_data(ctx->header_evp);
+        // The main chacha20 key is the first half of the ssh encryption key.
+        for(int i=0; i<32; i++)
+            key[i]=cipherDataM[i];
+        // The header chacha20 key is the second half of the ssh encryption key.
+        for(int i=0; i<32; i++)
+            key[i+32]=cipherDataH[i];
+
+        // Initialize a new context. We can't return the new pointer to the
+        // context from crypt, but that's OK.
+        struct chachapoly_ctx * newctx = ccmt_init(key,64);
+        // No need to remember this anymore
+        explicit_bzero(key,sizeof(key));
+        // If anything went wrong, best to error out now.
+        if(newctx == NULL)
+            return 1; // indicate an error
+        // Free the old EVP contexts.
+        EVP_CIPHER_CTX_free(ctx->main_evp);
+        EVP_CIPHER_CTX_free(ctx->header_evp);
+        // Copy the addresses to the new EVP contexts into the existing
+        // chachapoly context.
+        ctx->main_evp = newctx->main_evp;
+        ctx->header_evp = newctx->header_evp;
+
+        // Verify the new MT context is where it should be
+        if(EVP_CIPHER_CTX_get_app_data(ctx->main_evp) == NULL)
+            // If the MT context is STILL missing, well, we tried.
+            return 1; // indicate an error
+
+    }
 
 	q = &c->q[c->qidx];
 	ridx = c->ridx;
