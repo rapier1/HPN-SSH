@@ -37,6 +37,7 @@
 
 struct chachapoly_ctx {
 	EVP_CIPHER_CTX *main_evp, *header_evp;
+	void * cpf_ctx;
 };
 
 struct chachapoly_ctx *
