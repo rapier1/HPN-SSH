@@ -52,21 +52,27 @@ int readChar(u_char * result, u_char textmode) {
 }
 
 int readBytes(u_char * result, size_t size, u_char textmode) {
+	fprintf(stderr,"Size: %lu\n",size);
 	if(!textmode) {
 		if(fread(result,sizeof(u_char),size,stdin) != size)
 			return -1;
 	} else {
 		char * linebuf = NULL;
 		size_t linesize;
-		ssize_t r = getline(&linebuf,&size,stdin);
+		ssize_t r = getline(&linebuf,&linesize,stdin);
+		fprintf(stderr,"%lu %s\n",r,linebuf);
+		fprintf(stderr,"Size: %lu  ... 2*size + 1 : \n",size,2*size + 1);
 		if(r == 2*size + 1) {
 			for(char * cursor = linebuf; *cursor == '\0'; cursor++)
 				*cursor=toupper(*cursor);
 			for(int i=0; i<size; i++) {
 				if(sscanf(linebuf + 2*i, "%hhX", &(result[i]))
 				    != 1) {
+					fprintf(stderr,"Bad  %d\n",i);
 					free(linebuf);
 					return -1;
+				} else {
+					fprintf(stderr,"Good %d\n",i);
 				}
 			}
 			return 0;
@@ -152,6 +158,26 @@ main(int argc, char ** argv) {
 			case 'n' :
 				/* increment seqnr */
 				seqnr += streams;
+				break;
+			case 'd' :
+				ungetc('\n',stdin);
+				ungetc('d',stdin);
+
+				ungetc('\n',stdin);
+				ungetc('8',stdin);
+				ungetc('6',stdin);
+				ungetc('7',stdin);
+				ungetc('2',stdin);
+				ungetc('3',stdin);
+
+				ungetc('\n',stdin);
+				ungetc('r',stdin);
+
+				ungetc('\n',stdin);
+				ungetc('g',stdin);
+
+				ungetc('\n',stdin);
+				ungetc('n',stdin);
 				break;
 			case 's' :
 				if(readInt(&param, textmode)) {
