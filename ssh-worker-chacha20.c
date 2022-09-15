@@ -14,8 +14,10 @@
 
 #ifdef DEBUGMODE
 	#define err(fmt, args...) _err(fmt, ##args)
+	#define dumphex(label, data, size) _dumphex(label, data, size)
 #else
 	#define err(fmt, args...)
+	#define dumphex(label, data, size)
 #endif
 
 int _err(const char * restrict format, ...) {
@@ -35,7 +37,7 @@ int _err(const char * restrict format, ...) {
 	return done;
 }
 
-void dumphex(const u_char * label, const u_char * data, size_t size) {
+void _dumphex(const u_char * label, const u_char * data, size_t size) {
 	char * str = malloc(size * 2 + 1);
 	for(u_int i=0; i<size; i++)
 		sprintf(str + 2*i, "%02hhx", data[i]);
@@ -48,7 +50,9 @@ void discard() {
 	char * linebuf;
 	size_t size = 1;
 	linebuf = malloc(size * sizeof(char));
-	getline(&linebuf,&size,stdin);
+	if(getline(&linebuf,&size,stdin) == -1) {
+		err("Something odd happened.");
+	}
 	free(linebuf);
 }
 
