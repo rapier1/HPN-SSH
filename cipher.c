@@ -310,7 +310,8 @@ cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
 	cc->cipher = cipher;
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
 		if (post_auth)
-			cc->cp_ctx = chachapolyf_new(key, keylen);
+			cc->cp_ctx = chachapolyf_new(
+			    oldcc ? oldcc->cp_ctx : NULL, key, keylen);
 		else
 			cc->cp_ctx = chachapoly_new(key, keylen);
 		ret = cc->cp_ctx != NULL ? 0 : SSH_ERR_INVALID_ARGUMENT;

@@ -40,7 +40,7 @@
 #define READ_END 0
 #define WRITE_END 1
 
-#define NUMWORKERS 4
+#define NUMWORKERS 2
 
 #define WORKERPATH "ssh-worker-chacha20"
 
@@ -52,16 +52,94 @@ struct chachapoly_ctx {
 struct chachapolyf_ctx {
 	int rpipes[NUMWORKERS][2];
 	int wpipes[NUMWORKERS][2];
+	u_int nextseqnr;
 	pid_t pids[NUMWORKERS];
 };
 
+u_int globalNumPipes = 0;
+size_t globalPipesSize = 0;
+int * globalPipes = NULL;
+
+void
+dumphex(const u_char * label, const u_char * data, size_t size) {
+	if(size > 32) {
+		dumphex(label,data,32);
+		dumphex(label,data+32,size-32);
+		return;
+	}
+	char * str = malloc(size * 2 + 1);
+	for(u_int i=0; i<size; i++)
+		sprintf(str + 2*i, "%02hhx", data[i]);
+	debug_f("DEBUGX: %s: %s", label, str);
+	free(str);
+}
+
+int
+pw(struct chachapolyf_ctx * ctx, u_int worker, const u_char * data,
+    size_t size) {
+/*	debug_f("DEBUGX: Writing %lu bytes to pipe %u.", size,
+	    ctx->wpipes[worker][WRITE_END]);
+	dumphex("bytes",data,size);*/
+	return (write(ctx->wpipes[worker][WRITE_END], data, size*sizeof(u_char))
+	    != (ssize_t) (size * sizeof(u_char)));
+}
+int
+pcw(struct chachapolyf_ctx * ctx, u_int worker, u_char data) {
+/*	debug_f("DEBUGX: Writing a char to pipe %u: %c",
+	    ctx->wpipes[worker][WRITE_END], data); */
+	return (write(ctx->wpipes[worker][WRITE_END], &data, sizeof(u_char))
+	    != sizeof(u_char));
+}
+int
+piw(struct chachapolyf_ctx * ctx, u_int worker, u_int data) {
+/*	debug_f("DEBUGX: Writing an int to pipe %u: %u",
+	    ctx->wpipes[worker][WRITE_END], data); */
+	return (write(ctx->wpipes[worker][WRITE_END], &data, sizeof(u_int))
+	    != sizeof(u_int));
+}
+int
+pr(struct chachapolyf_ctx * ctx, u_int worker, u_char * data, size_t size) {
+/*	debug_f("DEBUGX: Reading %lu bytes from pipe %u...", size,
+	    ctx->rpipes[worker][READ_END]); */
+	int ret = -1;
+	size_t count = 0;
+	while(count < size) {
+		ret = read(ctx->rpipes[worker][READ_END], data + count, size - count);
+		if(ret == -1 || ret == 0) {
+/*			debug_f("DEBUGX: err(%d)",ret); */
+			return 1;
+		} else {
+			count += ret;
+/*			dumphex("so far",data,count); */
+		}
+	}
+/*	dumphex("complete",data,size); */
+	return 0;
+}
+
+
 struct chachapoly_ctx *
-chachapolyf_new(const u_char *key, u_int keylen)
+chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 {
-	fprintf(stderr,"DEBUGX: %s() START\n",__func__);
 	struct chachapoly_ctx *cp_ctx = chachapoly_new(key,keylen);
 	if(cp_ctx == NULL)
 		return NULL;
+
+	u_int numNewPipes = 2 * NUMWORKERS;
+	if((globalPipesSize == 0) != (globalPipes == NULL)) {
+		/* Something weird happened. */
+		return NULL;
+	} else if (globalPipesSize < globalNumPipes + numNewPipes) {
+		u_int delta = globalNumPipes + numNewPipes - globalPipesSize;
+		int * newptr = realloc(globalPipes,
+		    (globalPipesSize + delta) * sizeof(int));
+		if(newptr == NULL)
+			return NULL;
+		globalPipes = newptr;
+		for(u_int i=0; i<delta; i++)
+			globalPipes[globalPipesSize+i]=-1;
+		globalPipesSize += numNewPipes;
+	}
 
 	if ((cp_ctx->cpf_ctx = calloc(1, sizeof(*(cp_ctx->cpf_ctx)))) == NULL) {
 		chachapoly_free(cp_ctx);
@@ -69,9 +147,14 @@ chachapolyf_new(const u_char *key, u_int keylen)
 	}
 	struct chachapolyf_ctx *ctx = cp_ctx->cpf_ctx;
 
+	u_int nextseqnr=0;
+	if (oldctx != NULL && oldctx->cpf_ctx != NULL) {
+		nextseqnr=oldctx->cpf_ctx->nextseqnr;
+	}
+
 	for(int i=0; i<NUMWORKERS; i++) {
 		if(pipe(ctx->wpipes[i]) != 0) {
-			for(int j=i-1; i>=0; i--) {
+			for(int j=i-1; j>=0; j--) {
 				close(ctx->wpipes[j][READ_END]);
 				close(ctx->wpipes[j][WRITE_END]);
 				close(ctx->rpipes[j][READ_END]);
@@ -83,7 +166,7 @@ chachapolyf_new(const u_char *key, u_int keylen)
 		if(pipe(ctx->rpipes[i]) != 0) {
 			close(ctx->wpipes[i][READ_END]);
 			close(ctx->wpipes[i][WRITE_END]);
-			for(int j=i-1; i>=0; i--) {
+			for(int j=i-1; j>=0; j--) {
 				close(ctx->wpipes[j][READ_END]);
 				close(ctx->wpipes[j][WRITE_END]);
 				close(ctx->rpipes[j][READ_END]);
@@ -95,44 +178,37 @@ chachapolyf_new(const u_char *key, u_int keylen)
 	}
 
 	u_int streams = NUMWORKERS;
-
 	for(u_int i=0; i<NUMWORKERS; i++) {
 		ctx->pids[i] = fork();
 		if(ctx->pids[i] == -1) {
-			close(ctx->wpipes[i][READ_END]);
-			close(ctx->wpipes[i][WRITE_END]);
-			close(ctx->rpipes[i][READ_END]);
-			close(ctx->rpipes[i][WRITE_END]);
-			for(int j=i-1; j>=0; j--) {
-				write(ctx->wpipes[j][WRITE_END], "q", 1);
+			for(int j=0; j<NUMWORKERS; j++) {
+				/*pcw(ctx, j, 'q');*/
+				close(ctx->wpipes[j][READ_END]);
 				close(ctx->wpipes[j][WRITE_END]);
 				close(ctx->rpipes[j][READ_END]);
-				waitpid(ctx->pids[j], NULL, 0);
+				close(ctx->rpipes[j][WRITE_END]);
+				/*waitpid(ctx->pids[j], NULL, 0);*/
 			}
 			freezero(ctx,sizeof(*ctx));
 			return NULL;
 		}
 		if(ctx->pids[i] != 0) {
 			/* parent process */
-			/* TODO: what do we do if these fail?! */
-			close(ctx->wpipes[i][READ_END]);
-			close(ctx->rpipes[i][WRITE_END]);
-
-			if(write(ctx->wpipes[i][WRITE_END], "b", 1) != 1      ||
-			   write(ctx->wpipes[i][WRITE_END], &streams, 1) != 1 ||
-			   write(ctx->wpipes[i][WRITE_END], &i, 1) != 1       ||
-			   write(ctx->wpipes[i][WRITE_END], key, keylen)
-			       != keylen                                      ||
-			   write(ctx->wpipes[i][WRITE_END], "g", 1) != 1) {
-				close(ctx->wpipes[i][WRITE_END]);
-				close(ctx->rpipes[i][READ_END]);
-				waitpid(ctx->pids[i], NULL, 0);
-				for(int j=i-1; j>=0; j--) {
-					write(ctx->wpipes[j][WRITE_END], "q",
-					    1);
+			u_int workerseqnr = nextseqnr;
+			while(workerseqnr % NUMWORKERS != i)
+				workerseqnr++;
+			if (pcw(ctx, i, 'b') ||
+			    piw(ctx, i, streams) ||
+			    piw(ctx, i, workerseqnr) ||
+			    pw(ctx, i, key, keylen) ||
+			    pcw(ctx, i, 'g')) {
+				for(int j=0; j<NUMWORKERS; j++) {
+					/*pcw(ctx, j, 'q');*/
+					close(ctx->wpipes[j][READ_END]);
 					close(ctx->wpipes[j][WRITE_END]);
 					close(ctx->rpipes[j][READ_END]);
-					waitpid(ctx->pids[j], NULL, 0);
+					close(ctx->rpipes[j][WRITE_END]);
+					/*waitpid(ctx->pids[j], NULL, 0);*/
 				}
 				freezero(ctx,sizeof(*ctx));
 				return NULL;
@@ -143,16 +219,96 @@ chachapolyf_new(const u_char *key, u_int keylen)
 				exit(1);
 			if(dup2(ctx->wpipes[i][READ_END],STDIN_FILENO) == -1)
 				exit(1);
-			if(close(ctx->wpipes[i][READ_END]) == -1)
-				exit(1);
-			if(close(ctx->wpipes[i][WRITE_END]) == -1)
-				exit(1);
-			if(close(ctx->rpipes[i][READ_END]) == -1)
-				exit(1);
-			if(close(ctx->rpipes[i][WRITE_END]) == -1)
-				exit(1);
+			for(u_int j=0; j<NUMWORKERS; j++) {
+				if(close(ctx->wpipes[j][WRITE_END]) == -1)
+					exit(1);
+				if(close(ctx->rpipes[j][READ_END]) == -1)
+					exit(1);
+				if(close(ctx->rpipes[j][WRITE_END]) == -1)
+					exit(1);
+				if(close(ctx->wpipes[j][READ_END]) == -1)
+					exit(1);
+			}
+			for(u_int j=0; j<globalPipesSize; j++) {
+				if(globalPipes[j] == -1)
+					continue;
+				if(close(globalPipes[j]) == -1)
+					exit(1);
+			}
 			execlp(WORKERPATH,WORKERPATH,(char *) NULL);
 			exit(1);
+		}
+	}
+	int ret=0;
+	for(u_int i=0; i<NUMWORKERS; i++) {
+		ret |= close(ctx->wpipes[i][READ_END]);
+		ret |= close(ctx->rpipes[i][WRITE_END]);
+	}
+	if(ret) {
+		for(u_int i=0; i<NUMWORKERS; i++) {
+			close(ctx->wpipes[i][WRITE_END]);
+			close(ctx->rpipes[i][READ_END]);
+		}
+		freezero(ctx,sizeof(*ctx));
+		return NULL;
+	}
+	u_int gpIndex=0;
+	for(u_int i=0; i<NUMWORKERS; i++) {
+		for(; gpIndex < globalPipesSize; gpIndex++) {
+			if(globalPipes[gpIndex] == -1) {
+				globalPipes[gpIndex] =
+				    ctx->wpipes[i][WRITE_END];
+				globalNumPipes++;
+				break;
+			}
+		}
+		if(gpIndex == globalPipesSize) {
+			for(u_int j=0; j<NUMWORKERS; j++) {
+				for(u_int k=0; k<globalPipesSize; k++) {
+					if(globalPipes[k] ==
+					    ctx->wpipes[j][WRITE_END]) {
+						globalPipes[k] = -1;
+						globalNumPipes--;
+					}
+					if(globalPipes[k] ==
+					    ctx->rpipes[j][READ_END]) {
+						globalPipes[k] = -1;
+						globalNumPipes--;
+					}
+				}
+				close(ctx->wpipes[j][WRITE_END]);
+				close(ctx->rpipes[j][READ_END]);
+			}
+			freezero(ctx,sizeof(*ctx));
+			return NULL;
+		}
+		for(; gpIndex < globalPipesSize; gpIndex++) {
+			if(globalPipes[gpIndex] == -1) {
+				globalPipes[gpIndex] =
+				    ctx->rpipes[i][READ_END];
+				globalNumPipes++;
+				break;
+			}
+		}
+		if(gpIndex == globalPipesSize) {
+			for(u_int j=0; j<NUMWORKERS; j++) {
+				for(u_int k=0; k<globalPipesSize; k++) {
+					if(globalPipes[k] ==
+					    ctx->wpipes[j][WRITE_END]) {
+						globalPipes[k] = -1;
+						globalNumPipes--;
+					}
+					if(globalPipes[k] ==
+					    ctx->rpipes[j][READ_END]) {
+						globalPipes[k] = -1;
+						globalNumPipes--;
+					}
+				}
+				close(ctx->wpipes[j][WRITE_END]);
+				close(ctx->rpipes[j][READ_END]);
+			}
+			freezero(ctx,sizeof(*ctx));
+			return NULL;
 		}
 	}
 	return cp_ctx;
@@ -161,18 +317,29 @@ chachapolyf_new(const u_char *key, u_int keylen)
 void
 chachapolyf_free(struct chachapoly_ctx *cpctx)
 {
-	fprintf(stderr,"DEBUGX: %s() START\n",__func__);
 	if (cpctx == NULL)
 		return;
 	struct chachapolyf_ctx * cpfctx = cpctx->cpf_ctx;
 	if (cpfctx != NULL) {
 		for(int i=0; i<NUMWORKERS; i++) {
-			write(cpfctx->wpipes[i][WRITE_END], "q", 1);
+/*				pcw(cpfctx, i, 'q');*/
+			for(u_int j=0; j<globalPipesSize; j++) {
+				if(globalPipes[j] ==
+				    cpfctx->wpipes[i][WRITE_END]) {
+					globalPipes[j] = -1;
+					globalNumPipes--;
+				}
+				if(globalPipes[j] ==
+				    cpfctx->rpipes[i][READ_END]) {
+					globalPipes[j] = -1;
+					globalNumPipes--;
+				}
+			}
 			close(cpfctx->wpipes[i][WRITE_END]);
 			close(cpfctx->rpipes[i][READ_END]);
-			waitpid(cpfctx->pids[i],NULL,0);
+/*				waitpid(cpfctx->pids[i], NULL, 0);*/
 		}
-		freezero(cpfctx,sizeof(*cpfctx));
+		freezero(cpfctx, sizeof(*cpfctx));
 	}
 	chachapoly_free(cpctx);
 }
@@ -190,25 +357,41 @@ int
 chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
     const u_char *src, u_int len, u_int aadlen, u_int authlen, int do_encrypt)
 {
-	fprintf(stderr,"DEBUGX: %s() START\n",__func__);
 	if(cp_ctx->cpf_ctx == NULL) {
+/*		debug_f("FALLBACK"); */
 		return chachapoly_crypt(cp_ctx, seqnr, dest, src, len, aadlen,
 		    authlen, do_encrypt);
 	}
 	struct chachapolyf_ctx * ctx = cp_ctx->cpf_ctx;
 
+/*	dumphex("src (AADLEN)", src, AADLEN); */
+
 	u_char xorStream[KEYSTREAMLEN + AADLEN];
 	u_char expected_tag[POLY1305_TAGLEN];
 	u_char poly_key[POLY1305_KEYLEN];
 	int r = SSH_ERR_INTERNAL_ERROR;
-	if (write(ctx->wpipes[seqnr % NUMWORKERS][WRITE_END], "p", 1) ||
-	    write(ctx->wpipes[seqnr % NUMWORKERS][WRITE_END], &len,
-	    sizeof(len))                                              ||
-	    read(ctx->rpipes[seqnr % NUMWORKERS][READ_END], poly_key,
-	    POLY1305_KEYLEN * sizeof(u_char))                         ||
-	    read(ctx->rpipes[seqnr % NUMWORKERS][READ_END], xorStream,
-	    (KEYSTREAMLEN + AADLEN) * sizeof(u_char))                 ||
-	    write(ctx->wpipes[seqnr % NUMWORKERS][WRITE_END], "ng", 2))
+	if (ctx->nextseqnr != seqnr) {
+		for(int i=0; i< NUMWORKERS; i++) {
+			if(pcw(ctx, (seqnr+i) % NUMWORKERS, 's'))
+				goto out;
+			if(piw(ctx, (seqnr+i) % NUMWORKERS, seqnr+i))
+				goto out;
+			if(pcw(ctx, (seqnr+i) % NUMWORKERS, 'g'))
+				goto out;
+		}
+		ctx->nextseqnr = seqnr;
+	}
+	if (pcw(ctx, seqnr % NUMWORKERS, 'p'))
+		goto out;
+	if (piw(ctx, seqnr % NUMWORKERS, len))
+		goto out;
+	if (pr(ctx, seqnr % NUMWORKERS, poly_key, POLY1305_KEYLEN))
+		goto out;
+/*	dumphex("poly_key",poly_key,POLY1305_KEYLEN); */
+	if (pr(ctx, seqnr % NUMWORKERS, xorStream, len + AADLEN))
+		goto out;
+/*	dumphex("xorStream (AADLEN)", xorStream, AADLEN); */
+	if (pw(ctx, seqnr % NUMWORKERS, "ng", 2))
 		goto out;
 
 	/* If decrypting, check tag before anything else */
@@ -222,7 +405,7 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 		}
 	}
 
-	for (u_int i = 0; i < KEYSTREAMLEN + AADLEN; i++)
+	for (u_int i = 0; i < len + AADLEN; i++)
 		dest[i] = xorStream[i] ^ src[i];
 
 	/* If encrypting, calculate and append tag */
@@ -230,11 +413,13 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 		poly1305_auth(dest + aadlen + len, dest, aadlen + len,
 		     poly_key);
 	}
+	ctx->nextseqnr = seqnr + 1;
 	r = 0;
  out:
 	explicit_bzero(xorStream, sizeof(xorStream));
 	explicit_bzero(expected_tag, sizeof(expected_tag));
 	explicit_bzero(poly_key, sizeof(poly_key));
+/*	dumphex("dest (AADLEN)", dest, AADLEN); */
 	return r;
 }
 
@@ -243,25 +428,35 @@ int
 chachapolyf_get_length(struct chachapoly_ctx *cp_ctx,
     u_int *plenp, u_int seqnr, const u_char *cp, u_int len)
 {
-	fprintf(stderr,"DEBUGX: %s() START\n",__func__);
-	if(cp_ctx->cpf_ctx == NULL)
+	if(cp_ctx->cpf_ctx == NULL) {
+/*		debug_f("FALLBACK"); */
 		return chachapoly_get_length(cp_ctx, plenp, seqnr, cp, len);
+	}
 	struct chachapolyf_ctx * ctx = cp_ctx->cpf_ctx;
 
 	u_char buf[4];
 	u_char xorStream[4];
-	u_int zero = 0;
 
 	if (len < 4)
 		return SSH_ERR_MESSAGE_INCOMPLETE;
+
+	if (ctx->nextseqnr != seqnr) {
+		for(int i=0; i<NUMWORKERS; i++) {
+			if(pcw(ctx, (seqnr+i) % NUMWORKERS, 's'))
+				return SSH_ERR_LIBCRYPTO_ERROR;
+			if(piw(ctx, (seqnr+i) % NUMWORKERS, seqnr+i))
+				return SSH_ERR_LIBCRYPTO_ERROR;
+			if(pcw(ctx, (seqnr+i) % NUMWORKERS, 'g'))
+				return SSH_ERR_LIBCRYPTO_ERROR;
+		}
+		ctx->nextseqnr = seqnr;
+	}
 	
-	if (write(ctx->wpipes[seqnr % NUMWORKERS][WRITE_END], "r", 1) ||
-	    write(ctx->wpipes[seqnr % NUMWORKERS][WRITE_END], &zero,
-	    sizeof(zero))                                             ||
-	    read(ctx->rpipes[seqnr % NUMWORKERS][READ_END], xorStream,
-	    len * sizeof(u_char))) {
-	    /* TODO: better error message here */
-	    return SSH_ERR_LIBCRYPTO_ERROR;
+	if (pcw(ctx, seqnr % NUMWORKERS, 'r') ||
+	    piw(ctx, seqnr % NUMWORKERS, 0) ||
+	    pr(ctx,seqnr % NUMWORKERS, xorStream, 4)) {
+		/* TODO: better error return value here */
+		return SSH_ERR_LIBCRYPTO_ERROR;
 	}
 	for (u_int i=0; i < sizeof(buf); i++)
 		buf[i] = xorStream[i] ^ cp[i];

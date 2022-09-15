@@ -3,13 +3,15 @@
 
 #include "cipher-chachapoly.h"
 
-#define KEYSTREAMLEN ((((SSH_IOBUFSZ - 1)/CHACHA_BLOCKLEN) + 1)*CHACHA_BLOCKLEN)
+#define KEYSTREAMLEN ((((SSH_IOBUFSZ + 128 - 1)/CHACHA_BLOCKLEN) + 1) \
+    * CHACHA_BLOCKLEN)
 #define AADLEN 4
 
 struct chachapoly_ctx;
 
-struct chachapoly_ctx * chachapolyf_new(const u_char *key, u_int keylen)
-    __attribute__((__bounded__(__buffer__, 1, 2)));
+struct chachapoly_ctx * chachapolyf_new(struct chachapoly_ctx *oldctx,
+    const u_char *key, u_int keylen)
+    __attribute__((__bounded__(__buffer__, 2, 3)));
 void chachapolyf_free(struct chachapoly_ctx *cpctx);
 
 int chachapolyf_crypt(struct chachapoly_ctx *cpctx, u_int seqnr, u_char *dest,
