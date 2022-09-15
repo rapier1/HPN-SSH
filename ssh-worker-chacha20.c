@@ -10,6 +10,40 @@
 #include "sshbuf.h"
 #include "cipher-chachapoly-forks.h"
 
+/* #define DEBUGMODE */
+
+#ifdef DEBUGMODE
+	#define err(fmt, args...) _err(fmt, ##args)
+#else
+	#define err(fmt, args...)
+#endif
+
+int _err(const char * restrict format, ...) {
+	va_list arg;
+	int done;
+	char prefix[64];
+	memset(prefix,'\0',sizeof(prefix));
+	sprintf(prefix,"DEBUGY(%d): ",getpid());
+	char * buf = malloc(strlen(prefix) + strlen(format) + 1);
+	memset(buf,'\0',sizeof(buf));
+	strcat(buf,prefix);
+	strcat(buf,format);
+	va_start(arg, format);
+	done = vfprintf(stderr, buf, arg);
+	va_end(arg);
+	free(buf);
+	return done;
+}
+
+void dumphex(const u_char * label, const u_char * data, size_t size) {
+	char * str = malloc(size * 2 + 1);
+	for(u_int i=0; i<size; i++)
+		sprintf(str + 2*i, "%02hhx", data[i]);
+	err("%s: %s\n", label, str);
+	free(str);
+}
+
+
 void discard() {
 	char * linebuf;
 	size_t size = 1;
@@ -18,11 +52,25 @@ void discard() {
 	free(linebuf);
 }
 
+int readBinLoop(void * result, size_t size) {
+	size_t readbytes = -1;
+	size_t origsize = size;
+	while(size > 0) {
+		readbytes = read(STDIN_FILENO,result,size);
+		if(readbytes == -1)
+			return -1;
+		else {
+			err("read %lu binary bytes: \n",readbytes);
+			dumphex("bytes",result,readbytes);
+			size-=readbytes;
+		}
+	}
+	return 0;
+}
+
 int readInt(u_int * result, u_char textmode) {
 	if(!textmode) {
-		if(fread(result,sizeof(u_int),1,stdin) != 1)
-			return -1;
-		return 0;
+		return readBinLoop(result,sizeof(u_int));
 	} else {
 		char * linebuf = NULL;
 		size_t size;
@@ -44,7 +92,7 @@ int readInt(u_int * result, u_char textmode) {
 }
 
 int readChar(u_char * result, u_char textmode) {
-	if(fread(result,sizeof(u_char),1,stdin) != 1)
+	if(read(STDIN_FILENO,result,sizeof(u_char)) != 1)
 		return -1;
 	if(textmode)
 		discard();
@@ -52,27 +100,20 @@ int readChar(u_char * result, u_char textmode) {
 }
 
 int readBytes(u_char * result, size_t size, u_char textmode) {
-	fprintf(stderr,"Size: %lu\n",size);
 	if(!textmode) {
-		if(fread(result,sizeof(u_char),size,stdin) != size)
-			return -1;
+		return readBinLoop(result, size*sizeof(u_char));
 	} else {
 		char * linebuf = NULL;
 		size_t linesize;
 		ssize_t r = getline(&linebuf,&linesize,stdin);
-		fprintf(stderr,"%lu %s\n",r,linebuf);
-		fprintf(stderr,"Size: %lu  ... 2*size + 1 : \n",size,2*size + 1);
 		if(r == 2*size + 1) {
 			for(char * cursor = linebuf; *cursor == '\0'; cursor++)
 				*cursor=toupper(*cursor);
 			for(int i=0; i<size; i++) {
 				if(sscanf(linebuf + 2*i, "%hhX", &(result[i]))
 				    != 1) {
-					fprintf(stderr,"Bad  %d\n",i);
 					free(linebuf);
 					return -1;
-				} else {
-					fprintf(stderr,"Good %d\n",i);
 				}
 			}
 			return 0;
@@ -111,7 +152,8 @@ main(int argc, char ** argv) {
 	main_evp = NULL;
 	header_evp = NULL;
 
-	if(fread(&textmode, sizeof(textmode), 1, stdin) != 1)
+
+	if(read(STDIN_FILENO,&textmode, sizeof(textmode)) != 1)
 		goto cleanup;
 	if(textmode == 'b' || textmode == 'B') {
 		textmode = 0;
@@ -121,25 +163,32 @@ main(int argc, char ** argv) {
 	} else {
 		goto cleanup;
 	}
+	err("mode: %s\n",textmode ? "text" : "binary");
 
 	if(readInt(&streams, textmode))
 		goto cleanup;
+	err("streams: %u\n",streams);
 	if(readInt(&seqnr, textmode))
 		goto cleanup;
+	err("seqnr: %u\n",seqnr);
 
 	if((main_evp = EVP_CIPHER_CTX_new()) == NULL )
 		goto cleanup;
+	err("initialized main_evp\n");
 	if((header_evp = EVP_CIPHER_CTX_new()) == NULL )
 		goto cleanup;
+	err("initialized header_evp\n");
 
 	if(readBytes(mainkey, CHACHA_KEYLEN, textmode))
 		goto cleanup;
+	err("mainkey received\n");
 	if(!EVP_CipherInit(main_evp, EVP_chacha20(), mainkey, NULL, 1))
 		goto cleanup;
 	explicit_bzero(mainkey, sizeof(mainkey));
 
 	if(readBytes(headerkey, CHACHA_KEYLEN, textmode))
 		goto cleanup;
+	err("headerkey received\n");
 	if(!EVP_CipherInit(header_evp, EVP_chacha20(), headerkey, NULL, 1))
 		goto cleanup;
 	explicit_bzero(headerkey, sizeof(headerkey));
@@ -149,17 +198,27 @@ main(int argc, char ** argv) {
 	
 	quitting = 0;
 
-	while(!readChar(&cmd,textmode)) {
+	err("Entering main loop.\n");
+
+	while(1) {
+		if(readChar(&cmd, textmode)) {
+			err("Pipe closed\n");
+			break;
+		}
+		err("Start loop.\n");
 		switch(cmd) {
 			case 'q' :
 				/* quit */
+				err("received q\n");
 				quitting = 1;
 				break;
 			case 'n' :
 				/* increment seqnr */
+				err("received n\n");
 				seqnr += streams;
 				break;
 			case 'd' :
+				err("received d\n");
 				ungetc('\n',stdin);
 				ungetc('d',stdin);
 
@@ -180,7 +239,9 @@ main(int argc, char ** argv) {
 				ungetc('n',stdin);
 				break;
 			case 's' :
+				err("received s\n");
 				if(readInt(&param, textmode)) {
+					err("failed to read parameter.\n");
 					quitting = 1;
 					break;
 				}
@@ -188,37 +249,44 @@ main(int argc, char ** argv) {
 				break;
 			case 'g' :
 				/* genererate keystream */
+				err("received g\n");
 				memset(seqbuf,0,sizeof(seqbuf));
 				POKE_U64(seqbuf+8,seqnr);
 				memset(poly_key,0,sizeof(poly_key));
 				if(!EVP_CipherInit(main_evp, NULL, NULL, seqbuf,
 				    1)) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
 				if(EVP_Cipher(main_evp, poly_key, poly_key,
 				    sizeof(poly_key)) < 0) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
 				if(!EVP_CipherInit(header_evp, NULL, NULL,
 				    seqbuf, 1)) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
 				if(EVP_Cipher(header_evp, xorStream, zeros,
 				    CHACHA_BLOCKLEN) < 0 ) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
 				seqbuf[0] = 1;
 				if(!EVP_CipherInit(main_evp, NULL, NULL, seqbuf,
 				    1)) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
 				if(EVP_Cipher(main_evp, xorStream + AADLEN,
 				    zeros, KEYSTREAMLEN) < 0) {
+					err("failed in g.\n");
 					quitting=1;
 					break;
 				}
@@ -228,30 +296,43 @@ main(int argc, char ** argv) {
 				/* FALL THROUGH */
 			case 'r' :
 				/* read keystream */
+				err("received p / r\n");
 				if(readInt(&param, textmode)) {
+					err("failed to read parameter.\n");
 					quitting = 1;
 					break;
 				}
+				err("parameter: %u\n",param);
 				if(cmd == 'p') {
-					if(fwrite(poly_key, POLY1305_KEYLEN, 1,
-					    stdout) != 1) {
+					err("writing poly_key\n");
+					int ret;
+					if((ret = write(STDOUT_FILENO, poly_key,
+					    POLY1305_KEYLEN))
+					    != POLY1305_KEYLEN) {
 						quitting = 1;
 						break;
 					}
+					err("wrote poly_key: %d bytes\n", ret);
 				}
-				if(fwrite(xorStream, param + AADLEN, 1, stdout)
-				    != 1)
+				err("writing xorStream\n");
+				if(write(STDOUT_FILENO, xorStream,
+				    param + AADLEN) != param + AADLEN)
 					quitting = 1;
+				err("wrote xorStream\n");
 				break;
 			default :
 				/* unrecognized command */
+				err("unrecognized command\n");
 				quitting = 1;
 		}
-		if(quitting)
+		if(quitting) {
+			err("quitting detected.\n");
 			break;
+		}
 	}
 
  cleanup:
+	err("cleaning up.\n");
 	EVP_CIPHER_CTX_free(main_evp);
 	EVP_CIPHER_CTX_free(header_evp);
 	explicit_bzero(seqbuf,sizeof(seqbuf));
