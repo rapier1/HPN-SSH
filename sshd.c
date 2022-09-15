@@ -2334,6 +2334,8 @@ main(int ac, char **av)
 			debug("Single to Multithreaded CTR cipher swap - server request");
 			cipher_reset_multithreaded();
 			packet_request_rekeying();
+		} else if (strstr(cipher_ctx_name(cc), "chacha20-poly1305")) {
+			packet_request_rekeying();
 		}
 	}
 #endif

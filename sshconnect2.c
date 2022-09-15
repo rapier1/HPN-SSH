@@ -542,6 +542,8 @@ ssh_userauth2(struct ssh *ssh, const char *local_user,
 			debug("Single to Multithread CTR cipher swap - client request");
 			cipher_reset_multithreaded();
 			packet_request_rekeying();
+		} else if (strstr(cipher_ctx_name(cc), "chacha20-poly1305")) {
+			packet_request_rekeying();
 		}
 	}
 #endif
