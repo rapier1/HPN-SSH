@@ -36,6 +36,7 @@
 #include "sshbuf.h"
 #include "ssherr.h"
 #include "cipher-chachapoly-forks.h"
+#include "cipher-pipes.h"
 
 #define READ_END 0
 #define WRITE_END 1
@@ -55,10 +56,6 @@ struct chachapolyf_ctx {
 	u_int nextseqnr;
 	pid_t pids[NUMWORKERS];
 };
-
-u_int globalNumPipes = 0;
-size_t globalPipesSize = 0;
-int * globalPipes = NULL;
 
 void
 dumphex(const u_char * label, const u_char * data, size_t size) {
@@ -125,21 +122,8 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 	if(cp_ctx == NULL)
 		return NULL;
 
-	u_int numNewPipes = 2 * NUMWORKERS;
-	if((globalPipesSize == 0) != (globalPipes == NULL)) {
-		/* Something weird happened. */
+	if(allocCipherPipeSpace(2 * NUMWORKERS))
 		return NULL;
-	} else if (globalPipesSize < globalNumPipes + numNewPipes) {
-		u_int delta = globalNumPipes + numNewPipes - globalPipesSize;
-		int * newptr = realloc(globalPipes,
-		    (globalPipesSize + delta) * sizeof(int));
-		if(newptr == NULL)
-			return NULL;
-		globalPipes = newptr;
-		for(u_int i=0; i<delta; i++)
-			globalPipes[globalPipesSize+i]=-1;
-		globalPipesSize += delta;
-	}
 
 	if ((cp_ctx->cpf_ctx = calloc(1, sizeof(*(cp_ctx->cpf_ctx)))) == NULL) {
 		chachapoly_free(cp_ctx);
@@ -233,12 +217,8 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 				if(close(ctx->wpipes[j][READ_END]) == -1)
 					exit(1);
 			}
-			for(u_int j=0; j<globalPipesSize; j++) {
-				if(globalPipes[j] == -1)
-					continue;
-				if(close(globalPipes[j]) == -1)
-					exit(1);
-			}
+			if(closeCipherPipes())
+				exit(1);
 			execlp(helper,helper,(char *) NULL);
 			exit(1);
 		}
@@ -256,58 +236,12 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 		freezero(ctx,sizeof(*ctx));
 		return NULL;
 	}
-	u_int gpIndex=0;
 	for(u_int i=0; i<NUMWORKERS; i++) {
-		for(; gpIndex < globalPipesSize; gpIndex++) {
-			if(globalPipes[gpIndex] == -1) {
-				globalPipes[gpIndex] =
-				    ctx->wpipes[i][WRITE_END];
-				globalNumPipes++;
-				break;
-			}
-		}
-		if(gpIndex == globalPipesSize) {
+		if (addCipherPipe(ctx->wpipes[i][WRITE_END]) ||
+		    addCipherPipe(ctx->rpipes[i][READ_END])) {
 			for(u_int j=0; j<NUMWORKERS; j++) {
-				for(u_int k=0; k<globalPipesSize; k++) {
-					if(globalPipes[k] ==
-					    ctx->wpipes[j][WRITE_END]) {
-						globalPipes[k] = -1;
-						globalNumPipes--;
-					}
-					if(globalPipes[k] ==
-					    ctx->rpipes[j][READ_END]) {
-						globalPipes[k] = -1;
-						globalNumPipes--;
-					}
-				}
-				close(ctx->wpipes[j][WRITE_END]);
-				close(ctx->rpipes[j][READ_END]);
-			}
-			freezero(ctx,sizeof(*ctx));
-			return NULL;
-		}
-		for(; gpIndex < globalPipesSize; gpIndex++) {
-			if(globalPipes[gpIndex] == -1) {
-				globalPipes[gpIndex] =
-				    ctx->rpipes[i][READ_END];
-				globalNumPipes++;
-				break;
-			}
-		}
-		if(gpIndex == globalPipesSize) {
-			for(u_int j=0; j<NUMWORKERS; j++) {
-				for(u_int k=0; k<globalPipesSize; k++) {
-					if(globalPipes[k] ==
-					    ctx->wpipes[j][WRITE_END]) {
-						globalPipes[k] = -1;
-						globalNumPipes--;
-					}
-					if(globalPipes[k] ==
-					    ctx->rpipes[j][READ_END]) {
-						globalPipes[k] = -1;
-						globalNumPipes--;
-					}
-				}
+				delCipherPipe(ctx->wpipes[j][WRITE_END]);
+				delCipherPipe(ctx->rpipes[j][READ_END]);
 				close(ctx->wpipes[j][WRITE_END]);
 				close(ctx->rpipes[j][READ_END]);
 			}
@@ -327,18 +261,8 @@ chachapolyf_free(struct chachapoly_ctx *cpctx)
 	if (cpfctx != NULL) {
 		for(int i=0; i<NUMWORKERS; i++) {
 /*				pcw(cpfctx, i, 'q');*/
-			for(u_int j=0; j<globalPipesSize; j++) {
-				if(globalPipes[j] ==
-				    cpfctx->wpipes[i][WRITE_END]) {
-					globalPipes[j] = -1;
-					globalNumPipes--;
-				}
-				if(globalPipes[j] ==
-				    cpfctx->rpipes[i][READ_END]) {
-					globalPipes[j] = -1;
-					globalNumPipes--;
-				}
-			}
+			delCipherPipe(cpfctx->wpipes[i][WRITE_END]);
+			delCipherPipe(cpfctx->rpipes[i][READ_END]);
 			close(cpfctx->wpipes[i][WRITE_END]);
 			close(cpfctx->rpipes[i][READ_END]);
 /*				waitpid(cpfctx->pids[i], NULL, 0);*/
