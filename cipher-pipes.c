@@ -6,14 +6,16 @@
 size_t cipherPipesSize = 0;
 int * cipherPipes = NULL;
 
-void repack() {
+void
+repack()
+{
 	size_t i = 0;
 	size_t j = 0;
 	for (; i < cipherPipesSize; i++) {
 		if (cipherPipes[i] != -1)
 			continue;
 		if (j < i)
-			j=i;
+			j = i;
 		for (; j < cipherPipesSize; j++) {
 			if (cipherPipes[j] == -1)
 				continue;
@@ -29,13 +31,15 @@ void repack() {
 	}
 }
 
-int allocCipherPipeSpace(size_t numNewPipes) {
+int
+allocCipherPipeSpace(size_t numNewPipes)
+{
 	if ((cipherPipesSize == 0) != (cipherPipes == NULL))
 		return 1;
 
 	size_t count = 0;
-	for (size_t i=0; i<cipherPipesSize; i++)
-		if(cipherPipes[i] != -1)
+	for (size_t i = 0; i < cipherPipesSize; i++)
+		if (cipherPipes[i] != -1)
 			count++;
 	if (cipherPipesSize < count + numNewPipes) {
 		size_t delta = count + numNewPipes - cipherPipesSize;
@@ -44,36 +48,42 @@ int allocCipherPipeSpace(size_t numNewPipes) {
 		if (newptr == NULL)
 			return 1;
 		cipherPipes = newptr;
-		for (size_t i=0; i<delta; i++)
+		for (size_t i = 0; i < delta; i++)
 			cipherPipes[cipherPipesSize + i] = -1;
 		cipherPipesSize += delta;
 	}
 	return 0;
 }
 
-int addCipherPipe(int p) {
+int
+addCipherPipe(int p)
+{
 	for (size_t i = 0; i < cipherPipesSize; i++)
-		if(cipherPipes[i] == -1) {
+		if (cipherPipes[i] == -1) {
 			cipherPipes[i] = p;
 			return 0;
 		}
 	return 1;
 }
 
-void delCipherPipe(int p) {
+void
+delCipherPipe(int p)
+{
 	for (size_t i = 0; i < cipherPipesSize; i++)
-		if(cipherPipes[i] == p) {
+		if (cipherPipes[i] == p) {
 			cipherPipes[i] = -1;
 			repack();
 			return;
 		}
 }
 
-int closeCipherPipes() {
+int
+closeCipherPipes()
+{
 	int ret = 0;
 	for (size_t i = 0; i < cipherPipesSize; i++)
-		if(cipherPipes[i] != -1)
-			if(close(cipherPipes[i]) == -1)
+		if (cipherPipes[i] != -1)
+			if (close(cipherPipes[i]) == -1)
 				ret = 1;
 	return ret;
 }
