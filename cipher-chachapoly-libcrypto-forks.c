@@ -138,7 +138,7 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 		globalPipes = newptr;
 		for(u_int i=0; i<delta; i++)
 			globalPipes[globalPipesSize+i]=-1;
-		globalPipesSize += numNewPipes;
+		globalPipesSize += delta;
 	}
 
 	if ((cp_ctx->cpf_ctx = calloc(1, sizeof(*(cp_ctx->cpf_ctx)))) == NULL) {
