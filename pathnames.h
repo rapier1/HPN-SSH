@@ -139,6 +139,11 @@
 #define _PATH_SSH_SK_HELPER		"/usr/libexec/hpnssh-sk-helper"
 #endif
 
+/* Location of ssh-chachapoly-helper for asynchronous keystram generation */
+#ifndef _PATH_SSH_CCP_HELPER
+#define _PATH_SSH_CCP_HELPER		"/usr/libexec/hpnssh-chachapoly-helper"
+#endif
+
 /* xauth for X11 forwarding */
 #ifndef _PATH_XAUTH
 #define _PATH_XAUTH			"/usr/X11R6/bin/xauth"

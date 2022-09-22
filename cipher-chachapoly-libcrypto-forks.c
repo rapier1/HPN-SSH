@@ -42,7 +42,7 @@
 
 #define NUMWORKERS 2
 
-#define WORKERPATH "ssh-worker-chacha20"
+/* #define WORKERPATH "ssh-worker-chacha20" */
 
 struct chachapoly_ctx {
 	EVP_CIPHER_CTX *main_evp, *header_evp;
@@ -152,6 +152,10 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 		nextseqnr=oldctx->cpf_ctx->nextseqnr;
 	}
 
+	char * helper = getenv("SSH_CCP_HELPER");
+	if (helper == NULL || strlen(helper) == 0)
+		helper = _PATH_SSH_CCP_HELPER;
+
 	for(int i=0; i<NUMWORKERS; i++) {
 		if(pipe(ctx->wpipes[i]) != 0) {
 			for(int j=i-1; j>=0; j--) {
@@ -235,7 +239,7 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 				if(close(globalPipes[j]) == -1)
 					exit(1);
 			}
-			execlp(WORKERPATH,WORKERPATH,(char *) NULL);
+			execlp(helper,helper,(char *) NULL);
 			exit(1);
 		}
 	}
