@@ -199,13 +199,15 @@ $(srcdir)/configure: configure.ac $(srcdir)/m4/*.m4
 .c.o:
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
+POLYOPT=poly1305-opt/poly1305.o
 LIBCOMPAT=openbsd-compat/libopenbsd-compat.a
 $(LIBCOMPAT): always
 	(cd openbsd-compat && $(MAKE))
 always:
 
 libssh.a: $(LIBSSH_OBJS)
-	$(AR) rv $@ $(LIBSSH_OBJS)
+	(cd poly1305-opt && ./configure && $(MAKE))
+	$(AR) rv $@ $(LIBSSH_OBJS) $(POLYOPT)
 	$(RANLIB) $@
 
 hpnssh$(EXEEXT): $(LIBCOMPAT) libssh.a $(SSHOBJS)
@@ -302,6 +304,7 @@ clean:	regressclean
 	rm -f regress/misc/sk-dummy/*.lo
 	rm -f regress/misc/sk-dummy/sk-dummy.so
 	(cd openbsd-compat && $(MAKE) clean)
+	(cd poly1305-opt && $(MAKE) clean)
 
 distclean:	regressclean
 	rm -f *.o *.a $(TARGETS) logintest config.cache config.log
@@ -339,6 +342,7 @@ distclean:	regressclean
 	rm -f regress/misc/sk-dummy/*.lo
 	rm -f regress/misc/sk-dummy/sk-dummy.so
 	(cd openbsd-compat && $(MAKE) distclean)
+	(cd poly1305-opt && $(MAKE) distclean)
 	if test -d pkg ; then \
 		rm -fr pkg ; \
 	fi

@@ -34,6 +34,7 @@
 #include "sshbuf.h"
 #include "ssherr.h"
 #include "cipher-chachapoly.h"
+#include "poly1305-opt.h"
 
 struct chachapoly_ctx {
 	EVP_CIPHER_CTX *main_evp, *header_evp;
@@ -134,7 +135,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
-		poly1305_auth(dest + aadlen + len, dest, aadlen + len,
+		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
 		    poly_key);
 	}
 	r = 0;
