@@ -304,7 +304,7 @@ clean:	regressclean
 	rm -f regress/misc/sk-dummy/*.lo
 	rm -f regress/misc/sk-dummy/sk-dummy.so
 	(cd openbsd-compat && $(MAKE) clean)
-	(cd poly1305-opt && configure && $(MAKE) clean)
+	(cd poly1305-opt && ./configure && $(MAKE) clean)
 
 distclean:	regressclean
 	rm -f *.o *.a $(TARGETS) logintest config.cache config.log
