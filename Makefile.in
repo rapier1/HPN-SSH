@@ -342,7 +342,7 @@ distclean:	regressclean
 	rm -f regress/misc/sk-dummy/*.lo
 	rm -f regress/misc/sk-dummy/sk-dummy.so
 	(cd openbsd-compat && $(MAKE) distclean)
-	(cd poly1305-opt && configure && $(MAKE) distclean)
+	(cd poly1305-opt && ./configure && $(MAKE) distclean)
 	if test -d pkg ; then \
 		rm -fr pkg ; \
 	fi
