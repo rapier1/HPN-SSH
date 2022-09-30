@@ -43,6 +43,9 @@
 
 #define NUMWORKERS 2
 
+#define LIKELY(x)   __builtin_expect((x),1)
+#define UNLIKELY(x) __builtin_expect((x),0)
+
 /* #define WORKERPATH "ssh-worker-chacha20" */
 
 struct chachapoly_ctx {
@@ -311,7 +314,7 @@ int
 chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
     const u_char *src, u_int len, u_int aadlen, u_int authlen, int do_encrypt)
 {
-	if(cp_ctx->cpf_ctx == NULL) {
+	if (UNLIKELY(cp_ctx->cpf_ctx == NULL)) {
 /*		debug_f("FALLBACK"); */
 		return chachapoly_crypt(cp_ctx, seqnr, dest, src, len, aadlen,
 		    authlen, do_encrypt);
@@ -324,28 +327,28 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	u_char expected_tag[POLY1305_TAGLEN];
 	u_char poly_key[POLY1305_KEYLEN];
 	int r = SSH_ERR_INTERNAL_ERROR;
-	if (ctx->nextseqnr != seqnr) {
+	if (UNLIKELY(ctx->nextseqnr != seqnr)) {
 		for (u_int i = 0; i < ctx->numworkers; i++) {
-			if (pcw(ctx, (seqnr + i) % ctx->numworkers, 's'))
+			if (UNLIKELY(pcw(ctx, (seqnr + i) % ctx->numworkers, 's')))
 				goto out;
-			if (piw(ctx, (seqnr + i) % ctx->numworkers, seqnr + i))
+			if (UNLIKELY(piw(ctx, (seqnr + i) % ctx->numworkers, seqnr + i)))
 				goto out;
-			if (pcw(ctx, (seqnr + i) % ctx->numworkers, 'g'))
+			if (UNLIKELY(pcw(ctx, (seqnr + i) % ctx->numworkers, 'g')))
 				goto out;
 		}
 		ctx->nextseqnr = seqnr;
 	}
-	if (pcw(ctx, seqnr % ctx->numworkers, 'p'))
+	if (UNLIKELY(pcw(ctx, seqnr % ctx->numworkers, 'p')))
 		goto out;
-	if (piw(ctx, seqnr % ctx->numworkers, len))
+	if (UNLIKELY(piw(ctx, seqnr % ctx->numworkers, len)))
 		goto out;
-	if (pr(ctx, seqnr % ctx->numworkers, poly_key, POLY1305_KEYLEN))
+	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, poly_key, POLY1305_KEYLEN)))
 		goto out;
 /*	dumphex("poly_key",poly_key,POLY1305_KEYLEN); */
-	if (pr(ctx, seqnr % ctx->numworkers, xorStream, len + AADLEN))
+	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, xorStream, len + AADLEN)))
 		goto out;
 /*	dumphex("xorStream (AADLEN)", xorStream, AADLEN); */
-	if (pw(ctx, seqnr % ctx->numworkers, "ng", 2))
+	if (UNLIKELY(pw(ctx, seqnr % ctx->numworkers, "ng", 2)))
 		goto out;
 
 	/* If decrypting, check tag before anything else */
