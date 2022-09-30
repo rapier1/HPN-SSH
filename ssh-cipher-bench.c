@@ -352,7 +352,7 @@ int test(unsigned int maxstrlen, char * arg, uint32_t n) {
 		start = &(starts[counter]);
 		stop = &(stops[counter]);
 		clock_gettime(CLOCK_REALTIME, start);
-		cipher_crypt(ctx, counter, dest, src, len, aadlen, authlen);
+		cipher_crypt(ctx, counter, dest, src, len, aadlen, authlen, 1);
 		clock_gettime(CLOCK_REALTIME, stop);
 		no_opt += dest[15];
 	}
