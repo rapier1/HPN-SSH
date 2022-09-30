@@ -8,30 +8,29 @@ struct poly1305_key {
 	unsigned char b[32];
 };
 
-
 #if defined(__x86_64__) || defined(__x86_64) || defined(__amd64__) || \
 defined(__i386__) || defined(__i386) || defined(i386)
 
-void poly1305_auth_avx(unsigned char *mac, const unsigned char *in,
-    size_t inlen, const struct poly1305_key *key);
+#if !defined(poly1305_auth_opt) && defined(__AVX2__)
 void poly1305_auth_avx2(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
-void poly1305_auth_sse2(unsigned char *mac, const unsigned char *in,
-    size_t inlen, const struct poly1305_key *key);
-void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
-    size_t inlen, const struct poly1305_key *key);
-
-#if !defined(poly1305_auth_opt) && defined(__AVX2__)
 #define poly1305_auth_opt poly1305_auth_avx2
 #endif
 
 #if !defined(poly1305_auth_opt) && defined(__AVX__)
+void poly1305_auth_avx(unsigned char *mac, const unsigned char *in,
+    size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth_opt poly1305_auth_avx
 #endif
 
 #if !defined(poly1305_auth_opt) && defined(__SSE2__)
+void poly1305_auth_sse2(unsigned char *mac, const unsigned char *in,
+    size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth_opt poly1305_auth_sse2
 #endif
+
+void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
+    size_t inlen, const struct poly1305_key *key);
 
 #ifndef poly1305_auth_opt
 #define poly1305_auth_opt poly1305_auth_x86
@@ -43,14 +42,14 @@ void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
 
 /* TODO: only implemented for 32-bit? */
 
-void poly1305_auth_armv6(unsigned char *mac, const unsigned char *in,
-    size_t inlen, const struct poly1305_key *key);
+#if !defined(poly1305_auth_opt) && __ARM_NEON == 1
 void poly1305_auth_neon(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
-
-#if !defined(poly1305_auth_opt) && __ARM_NEON == 1
 #define poly1305_auth_opt poly1305_auth_neon
 #endif
+
+void poly1305_auth_armv6(unsigned char *mac, const unsigned char *in,
+    size_t inlen, const struct poly1305_key *key);
 
 #ifndef poly1305_auth_opt
 #define poly1305_auth_opt poly1305_auth_armv6
