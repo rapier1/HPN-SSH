@@ -290,6 +290,9 @@ chachapolyf_free(struct chachapoly_ctx *cpctx)
 			close(cpfctx->rpipes[i][READ_END]);
 /*				waitpid(cpfctx->pids[i], NULL, 0);*/
 		}
+		free(cpfctx->rpipes);
+		free(cpfctx->wpipes);
+		free(cpfctx->pids);
 		freezero(cpfctx, sizeof(*cpfctx));
 	}
 	chachapoly_free(cpctx);
