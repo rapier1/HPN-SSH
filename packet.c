@@ -309,12 +309,13 @@ ssh_packet_set_connection(struct ssh *ssh, int fd_in, int fd_out)
 	state = ssh->state;
 	state->connection_in = fd_in;
 	state->connection_out = fd_out;
+
 	if ((r = cipher_init(&state->send_context, none,
-	    (const u_char *)"", 0, NULL, 0, CIPHER_ENCRYPT,
-	    state->after_authentication)) != 0 ||
+			     (const u_char *)"", 0, NULL, 0,
+			     CIPHER_ENCRYPT, state->after_authentication)) != 0 ||
 	    (r = cipher_init(&state->receive_context, none,
-	    (const u_char *)"", 0, NULL, 0, CIPHER_DECRYPT,
-	    state->after_authentication)) != 0) {
+			     (const u_char *)"", 0, NULL, 0,
+			     CIPHER_DECRYPT, state->after_authentication)) != 0) {
 		error_fr(r, "cipher_init failed");
 		free(ssh); /* XXX need ssh_free_session_state? */
 		return NULL;
@@ -913,8 +914,8 @@ ssh_set_newkeys(struct ssh *ssh, int mode)
 	DBG(debug_f("cipher_init: %s", dir));
 	struct sshcipher_ctx *oldccp = *ccp;
 	if ((r = cipher_init(ccp, enc->cipher, enc->key, enc->key_len,
-	    enc->iv, enc->iv_len, crypt_type, state->after_authentication))
-	    != 0) {
+			     enc->iv, enc->iv_len, crypt_type,
+			     state->after_authentication)) != 0) {
 		cipher_free(oldccp);
 		return r;
 	} else {
@@ -1026,7 +1027,7 @@ ssh_packet_need_rekeying(struct ssh *ssh, u_int outbound_packet_len)
 		return 1;
 
 	/*
-	 * Always rekey when MAX_PACKETS sent in either direction 
+	 * Always rekey when MAX_PACKETS sent in either direction
 	 * As per RFC4344 section 3.1 we do this after 2^31 packets.
 	 */
 	if (state->p_send.packets > MAX_PACKETS ||
@@ -1970,16 +1971,16 @@ sshpkt_fatal(struct ssh *ssh, int r, const char *fmt, ...)
 }
 
 /* this prints out the final log entry */
-void 
+void
 sshpkt_final_log_entry (struct ssh *ssh) {
 	double total_time;
-	
-	if (ssh->start_time < 1) 
+
+	if (ssh->start_time < 1)
 		/* this will produce a NaN in the output. -cjr */
 		total_time = 0;
 	else
 		total_time = monotime_double() - ssh->start_time;
-	
+
 	logit("SSH: Server;LType: Throughput;Remote: %s-%d;IN: %lu;OUT: %lu;Duration: %.1f;tPut_in: %.1f;tPut_out: %.1f",
 	      ssh_remote_ipaddr(ssh), ssh_remote_port(ssh),
 	      ssh->stdin_bytes, ssh->fdout_bytes, total_time,

@@ -51,15 +51,13 @@
 struct sshcipher;
 struct sshcipher_ctx;
 
-void ssh_aes_ctr_thread_destroy(EVP_CIPHER_CTX *ctx); // defined in cipher-ctr-mt.c
-void ssh_aes_ctr_thread_reconstruction(EVP_CIPHER_CTX *ctx);
 struct sshcipher *cipher_by_name(const char *);
 const char *cipher_warning_message(const struct sshcipher_ctx *);
 int	 ciphers_valid(const char *);
 char	*cipher_alg_list(char, int);
 const char *compression_alg_list(int);
 int	 cipher_init(struct sshcipher_ctx **, const struct sshcipher *,
-    const u_char *, u_int, const u_char *, u_int, int, int);
+		     const u_char *, u_int, const u_char *, u_int, int, int);
 int	 cipher_crypt(struct sshcipher_ctx *, u_int, u_char *, const u_char *,
     u_int, u_int, u_int, int);
 int	 cipher_get_length(struct sshcipher_ctx *, u_int *, u_int,
