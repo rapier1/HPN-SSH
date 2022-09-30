@@ -362,8 +362,19 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 		}
 	}
 
+	u_int last4 = (len + AADLEN)/4 - 1;
+	((uint32_t *) dest)[last4] = ((uint32_t *) xorStream)[last4] ^ ((uint32_t *) src)[last4];
+	typedef uint64_t bsize;
+	bsize * destB      = (bsize *) &(dest[0]);
+	bsize * srcB       = (bsize *) &(src[0]);
+	bsize * xorStreamB = (bsize *) &(xorStream[0]);
+	for (u_int i = 0; i < len/(sizeof(bsize)); i++)
+		destB[i] = xorStreamB[i] ^ srcB[i];
+
+/*
 	for (u_int i = 0; i < len + AADLEN; i++)
 		dest[i] = xorStream[i] ^ src[i];
+*/	
 
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
