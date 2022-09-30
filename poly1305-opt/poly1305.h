@@ -15,24 +15,24 @@ struct poly1305_key {
 defined(__i386__) || defined(__i386) || defined(i386)
 
 #if !defined(poly1305_auth) && defined(__AVX2__)
-LIB_PUBLIC void poly1305_auth_avx2(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_avx2(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth poly1305_auth_avx2
 #endif
 
 #if !defined(poly1305_auth) && defined(__AVX__)
-LIB_PUBLIC void poly1305_auth_avx(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_avx(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth poly1305_auth_avx
 #endif
 
 #if !defined(poly1305_auth) && defined(__SSE2__)
-LIB_PUBLIC void poly1305_auth_sse2(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_sse2(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth poly1305_auth_sse2
 #endif
 
-LIB_PUBLIC void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 
 #ifndef poly1305_auth
@@ -46,12 +46,12 @@ LIB_PUBLIC void poly1305_auth_x86(unsigned char *mac, const unsigned char *in,
 /* TODO: only implemented for 32-bit? */
 
 #if !defined(poly1305_auth) && __ARM_NEON == 1
-LIB_PUBLIC void poly1305_auth_neon(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_neon(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 #define poly1305_auth poly1305_auth_neon
 #endif
 
-LIB_PUBLIC void poly1305_auth_armv6(unsigned char *mac, const unsigned char *in,
+void poly1305_auth_armv6(unsigned char *mac, const unsigned char *in,
     size_t inlen, const struct poly1305_key *key);
 
 #ifndef poly1305_auth

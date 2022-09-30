@@ -1,12 +1,6 @@
 #ifndef BASE_GCC_X86_S
 #define BASE_GCC_X86_S
 
-#include "asmopt.h"
-
-#if !defined(HAVE_SLASHMACRO) && !defined(HAVE_DOLLARMACRO)
-	#error Unknown gnu as macro parameter convention! Run ./configure
-#endif
-
 #define IS_X86_32 (defined(__i386__))
 #define IS_X86_64 (defined(__x86_64__))
 #define IS_ELF (defined(__ELF__))
@@ -110,46 +104,28 @@
 	.endm
 
 	.macro HIDDEN name
-	#if defined(HAVE_AS_HIDDEN)
 		.hidden \name
 		.hidden _\name
-	#endif
 	.endm
 
 	/* set NX for stack */
 	.section .note.GNU-stack,"",@progbits
 #elif (IS_MACH)
 	.macro FN name
-	#if defined(HAVE_SLASHMACRO)
 		\name:
 		_\name:
-	#elif defined(HAVE_DOLLARMACRO)
-		$0:
-		_$0:
-	#endif
 	.endm
 
 	.macro FN_EXT name, args, xmmused
-	#if defined(HAVE_SLASHMACRO)
 		FN \name
-	#elif defined(HAVE_DOLLARMACRO)
-		FN $0
-	#endif
 	.endm
 
 	.macro FN_END name
 	.endm
 
 	.macro HIDDEN name
-	#if defined(HAVE_AS_PRIVATE_EXTERN)
-	#if defined(HAVE_SLASHMACRO)
 		.private_extern \name
 		.private_extern _\name
-	#elif defined(HAVE_DOLLARMACRO)
-		.private_extern $0
-		.private_extern _$0
-	#endif
-	#endif
 	.endm
 #endif
 
@@ -175,67 +151,35 @@
 
 /* declare a global function */
 .macro GLOBAL name
-#if defined(HAVE_SLASHMACRO)
 	.globl \name
 	.globl _\name
-#elif defined(HAVE_DOLLARMACRO)
-	.globl $0
-	.globl _$0
-#endif
 .endm
 
 .macro GLOBAL_HIDDEN_FN name
-#if defined(HAVE_SLASHMACRO)
 	GLOBAL \name
 	HIDDEN \name
 	FN \name
-#elif defined(HAVE_DOLLARMACRO)
-	GLOBAL $0
-	HIDDEN $0
-	FN $0
-#endif
 .endm
 
 .macro GLOBAL_HIDDEN_FN_EXT name, args, xmmused
-#if defined(HAVE_SLASHMACRO)
 	GLOBAL \name
 	HIDDEN \name
 	FN_EXT \name, \args, \xmmused
-#elif defined(HAVE_DOLLARMACRO)
-	GLOBAL $0
-	HIDDEN $0
-	FN_EXT $0, $1, $2
-#endif
 .endm
 
 /* pic support */
 .macro LOAD_VAR_PIC var, reg
 #if (IS_X86_32)
-	#if defined(HAVE_SLASHMACRO)
-		call 1f
-		1:
-		popl \reg
-		leal \var - 1b(\reg), \reg
-	#elif defined(HAVE_DOLLARMACRO)
-		call 1f
-		1:
-		popl $1
-		leal $0 - 1b($1), $1
-	#endif
+	call 1f
+	1:
+	popl \reg
+	leal \var - 1b(\reg), \reg
 #else
-	#if defined(HAVE_SLASHMACRO)
-		leaq \var(%rip), \reg
-	#elif defined(HAVE_DOLLARMACRO)
-		leaq $0(%rip), $1
-	#endif
+	leaq \var(%rip), \reg
 #endif
 .endm
 
-#if defined(HAVE_SLASHMACRO)
-	#define INCLUDE_FILE_PARM "\file"
-#elif defined(HAVE_DOLLARMACRO)
-	#define INCLUDE_FILE_PARM $0
-#endif
+#define INCLUDE_FILE_PARM "\file"
 
 
 .macro INCLUDE file
@@ -244,15 +188,9 @@
 
 /* include the file with the variable(s) if variable 'name' is not already included */
 .macro INCLUDE_VAR_FILE file, name
-	#if defined(HAVE_SLASHMACRO)
-		.ifndef \name
-			.include INCLUDE_FILE_PARM
-		.endif
-	#elif defined(HAVE_DOLLARMACRO)
-		.ifndef $1
-			.include INCLUDE_FILE_PARM
-		.endif
-	#endif
+	.ifndef \name
+		.include INCLUDE_FILE_PARM
+	.endif
 .endm
 
 #endif /* BASE_GCC_X86_S */

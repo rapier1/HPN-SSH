@@ -1,12 +1,6 @@
 #ifndef BASE_GCC_ARM_S
 #define BASE_GCC_ARM_S
 
-#include "asmopt.h"
-
-#if !defined(HAVE_SLASHMACRO) && !defined(HAVE_DOLLARMACRO)
-	#error Unknown gnu as macro parameter convention! Run ./configure
-#endif
-
 .syntax unified
 .arm
 
@@ -30,10 +24,8 @@
 	.endm
 
 	.macro HIDDEN name
-	#if defined(HAVE_AS_HIDDEN)
 		.hidden \name
 		.hidden _\name
-	#endif
 	.endm
 
 	/* set NX for stack */
@@ -41,28 +33,16 @@
 #elif (IS_MACH)
 	.macro FN name
 		.align 2
-	#if defined(HAVE_SLASHMACRO)
 		\name:
 		_\name:
-	#elif defined(HAVE_DOLLARMACRO)
-		$0:
-		_$0:
-	#endif
 	.endm
 
 	.macro FN_END name
 	.endm
 
 	.macro HIDDEN name
-	#if defined(HAVE_AS_PRIVATE_EXTERN)
-	#if defined(HAVE_SLASHMACRO)
 		.private_extern \name
 		.private_extern _\name
-	#elif defined(HAVE_DOLLARMACRO)
-		.private_extern $0
-		.private_extern _$0
-	#endif
-	#endif
 	.endm
 #endif
 
@@ -88,49 +68,26 @@
 
 /* declare a global function */
 .macro GLOBAL name
-#if defined(HAVE_SLASHMACRO)
 	.globl \name
 	.globl _\name
-#elif defined(HAVE_DOLLARMACRO)
-	.globl $0
-	.globl _$0
-#endif
 .endm
 
 .macro GLOBAL_HIDDEN_FN name
-#if defined(HAVE_SLASHMACRO)
 	GLOBAL \name
 	HIDDEN \name
 	FN \name
-#elif defined(HAVE_DOLLARMACRO)
-	GLOBAL $0
-	HIDDEN $0
-	FN $0
-#endif
 .endm
 
 /* pic support */
 .macro LOAD_VAR_PIC var, reg
 #if (IS_ARM32)
-	#if defined(HAVE_SLASHMACRO)
 		adrl \reg, \var
-	#elif defined(HAVE_DOLLARMACRO)
-		adrl $1, $0
-	#endif
 #elif (IS_ARM64)
-	#if defined(HAVE_SLASHMACRO)
 		adr \reg, \var
-	#elif defined(HAVE_DOLLARMACRO)
-		adr $1, $0
-	#endif
 #endif
 .endm
 
-#if defined(HAVE_SLASHMACRO)
-	#define INCLUDE_FILE_PARM "\file"
-#elif defined(HAVE_DOLLARMACRO)
-	#define INCLUDE_FILE_PARM $0
-#endif
+#define INCLUDE_FILE_PARM "\file"
 
 .macro INCLUDE file
 	.include  INCLUDE_FILE_PARM
@@ -138,15 +95,9 @@
 
 /* include the file with the variable(s) if variable 'name' is not already included */
 .macro INCLUDE_VAR_FILE file, name
-	#if defined(HAVE_SLASHMACRO)
-		.ifndef \name
-			.include INCLUDE_FILE_PARM
-		.endif
-	#elif defined(HAVE_DOLLARMACRO)
-		.ifndef $1
-			.include INCLUDE_FILE_PARM
-		.endif
-	#endif
+	.ifndef \name
+		.include INCLUDE_FILE_PARM
+	.endif
 .endm
 
 #endif /* BASE_GCC_ARM_S */

@@ -2,20 +2,20 @@
 	#include "gcc-x86.inc"
 #endif
 
-#if (defined(__arm__  ) || defined(__aarch64__))
+#if defined(__arm__)
 	#include "gcc-arm.inc"
 #endif
 
 
 #if (IS_X86_64)
 
-#if defined(HAVE_AVX2)
+#if defined(__AVX2__)
 #include "poly1305_avx2-64.inc"
 #endif
-#if defined(HAVE_AVX)
+#if defined(__AVX__)
 #include "poly1305_avx-64.inc"
 #endif
-#if defined(HAVE_SSE2)
+#if defined(__SSE2__)
 #include "poly1305_sse2-64.inc"
 #endif
 
@@ -26,15 +26,15 @@
 
 #if (IS_X86_32)
 
-#if defined(HAVE_AVX2)
+#if defined(__AVX2__)
 #include "poly1305_avx2-32.inc"
 #endif
 
-#if defined(HAVE_AVX)
+#if defined(__AVX__)
 #include "poly1305_avx-32.inc"
 #endif
 
-#if defined(HAVE_SSE2)
+#if defined(__SSE2__)
 #include "poly1305_sse2-32.inc"
 #endif
 
@@ -43,10 +43,10 @@
 #endif /* IS_X86_32 */
 
 
-#if defined(HAVE_ARMv6)
+#if __ARM_ARCH >= 6
 #include "poly1305_armv6-32.inc"
 #endif
 
-#if (defined(CPU_32BITS) && defined(HAVE_NEON))
+#if (defined(__arm__) && defined(__ARM_NEON))
 #include "poly1305_neon-32.inc"
 #endif
