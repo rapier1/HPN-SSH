@@ -76,7 +76,8 @@ dumphex(const u_char * label, const u_char * data, size_t size) {
 	free(str);
 }
 
-int
+__attribute__((always_inline))
+static inline int
 pw(struct chachapolyf_ctx * ctx, u_int worker, const u_char * data,
     size_t size) {
 /*	debug_f("DEBUGX: Writing %lu bytes to pipe %u.", size,
@@ -85,21 +86,24 @@ pw(struct chachapolyf_ctx * ctx, u_int worker, const u_char * data,
 	return (write(ctx->wpipes[worker][WRITE_END], data, size*sizeof(u_char))
 	    != (ssize_t) (size * sizeof(u_char)));
 }
-int
+__attribute__((always_inline))
+static inline int
 pcw(struct chachapolyf_ctx * ctx, u_int worker, u_char data) {
 /*	debug_f("DEBUGX: Writing a char to pipe %u: %c",
 	    ctx->wpipes[worker][WRITE_END], data); */
 	return (write(ctx->wpipes[worker][WRITE_END], &data, sizeof(u_char))
 	    != sizeof(u_char));
 }
-int
+__attribute__((always_inline))
+static inline int
 piw(struct chachapolyf_ctx * ctx, u_int worker, u_int data) {
 /*	debug_f("DEBUGX: Writing an int to pipe %u: %u",
 	    ctx->wpipes[worker][WRITE_END], data); */
 	return (write(ctx->wpipes[worker][WRITE_END], &data, sizeof(u_int))
 	    != sizeof(u_int));
 }
-int
+__attribute__((always_inline))
+static inline int
 pr(struct chachapolyf_ctx * ctx, u_int worker, u_char * data, size_t size) {
 /*	debug_f("DEBUGX: Reading %lu bytes from pipe %u...", size,
 	    ctx->rpipes[worker][READ_END]); */
