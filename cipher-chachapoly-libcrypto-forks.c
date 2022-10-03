@@ -37,6 +37,7 @@
 #include "ssherr.h"
 #include "cipher-chachapoly-forks.h"
 #include "cipher-pipes.h"
+#include "poly1305-opt.h"
 
 #define READ_END 0
 #define WRITE_END 1
@@ -355,7 +356,7 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	if (!do_encrypt) {
 		const u_char *tag = src + aadlen + len;
 
-		poly1305_auth(expected_tag, src, aadlen + len, poly_key);
+		poly1305_auth_opt(expected_tag, src, aadlen + len, poly_key);
 		if (timingsafe_bcmp(expected_tag, tag, POLY1305_TAGLEN) != 0) {
 			r = SSH_ERR_MAC_INVALID;
 			goto out;
@@ -378,7 +379,7 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
-		poly1305_auth(dest + aadlen + len, dest, aadlen + len,
+		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
 		     poly_key);
 	}
 	ctx->nextseqnr = seqnr + 1;
