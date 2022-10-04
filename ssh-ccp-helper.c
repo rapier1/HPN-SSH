@@ -296,7 +296,7 @@ main(int argc, char ** argv) {
 				}
 				break;
 			case 'p' :
-				/* read poly_key and keystream */
+				/* read poly_key and keystream, then advance */
 				/* FALL THROUGH */
 			case 'r' :
 				/* read keystream */
@@ -323,6 +323,12 @@ main(int argc, char ** argv) {
 				    param + AADLEN) != param + AADLEN)
 					quitting = 1;
 				err("wrote xorStream\n");
+				if(cmd == 'p') {
+					/* queue generation of next keystream */
+					ungetc('g',stdin);
+					/* queue incrementing seqnr */
+					ungetc('n',stdin);
+				}
 				break;
 			default :
 				/* unrecognized command */

@@ -47,6 +47,8 @@
 #define LIKELY(x)   __builtin_expect((x),1)
 #define UNLIKELY(x) __builtin_expect((x),0)
 
+#define PUT_UINT(ADDR, VAL) ( *((u_int *) (ADDR)) = (VAL) )
+
 /* #define WORKERPATH "ssh-worker-chacha20" */
 
 struct chachapoly_ctx {
@@ -60,6 +62,8 @@ struct chachapolyf_ctx {
 	int (* wpipes)[2];
 	u_int nextseqnr;
 	pid_t * pids;
+	u_char sndbuf[4096];
+	u_char rcvbuf[POLY1305_KEYLEN + AADLEN + KEYSTREAMLEN];
 };
 
 void
@@ -326,34 +330,29 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	}
 	struct chachapolyf_ctx * ctx = cp_ctx->cpf_ctx;
 
-/*	dumphex("src (AADLEN)", src, AADLEN); */
+	u_char * poly_key = ctx->rcvbuf;
+	u_char * xorStream = &(ctx->rcvbuf[POLY1305_KEYLEN]);
 
-	u_char xorStream[KEYSTREAMLEN + AADLEN];
 	u_char expected_tag[POLY1305_TAGLEN];
-	u_char poly_key[POLY1305_KEYLEN];
+
 	int r = SSH_ERR_INTERNAL_ERROR;
 	if (UNLIKELY(ctx->nextseqnr != seqnr)) {
+		ctx->sndbuf[0] = 's';
+		ctx->sndbuf[5] = 'g';
 		for (u_int i = 0; i < ctx->numworkers; i++) {
-			if (UNLIKELY(pcw(ctx, (seqnr + i) % ctx->numworkers, 's')))
-				goto out;
-			if (UNLIKELY(piw(ctx, (seqnr + i) % ctx->numworkers, seqnr + i)))
-				goto out;
-			if (UNLIKELY(pcw(ctx, (seqnr + i) % ctx->numworkers, 'g')))
+			PUT_UINT(&(ctx->sndbuf[1]), seqnr + i);
+			if (UNLIKELY(pw(ctx, (seqnr + i) % ctx->numworkers,
+			    ctx->sndbuf, 6)))
 				goto out;
 		}
 		ctx->nextseqnr = seqnr;
 	}
-	if (UNLIKELY(pcw(ctx, seqnr % ctx->numworkers, 'p')))
+	ctx->sndbuf[0]='p';
+	PUT_UINT(&(ctx->sndbuf[1]), len);
+	if (UNLIKELY(pw(ctx, seqnr % ctx->numworkers, ctx->sndbuf, 5)))
 		goto out;
-	if (UNLIKELY(piw(ctx, seqnr % ctx->numworkers, len)))
-		goto out;
-	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, poly_key, POLY1305_KEYLEN)))
-		goto out;
-/*	dumphex("poly_key",poly_key,POLY1305_KEYLEN); */
-	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, xorStream, len + AADLEN)))
-		goto out;
-/*	dumphex("xorStream (AADLEN)", xorStream, AADLEN); */
-	if (UNLIKELY(pw(ctx, seqnr % ctx->numworkers, "ng", 2)))
+	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, ctx->rcvbuf,
+	    POLY1305_KEYLEN + AADLEN + len)))
 		goto out;
 
 	/* If decrypting, check tag before anything else */
@@ -368,7 +367,8 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	}
 
 	u_int last4 = (len + AADLEN)/4 - 1;
-	((uint32_t *) dest)[last4] = ((uint32_t *) xorStream)[last4] ^ ((uint32_t *) src)[last4];
+	((uint32_t *) dest)[last4] =
+	    ((uint32_t *) xorStream)[last4] ^ ((uint32_t *) src)[last4];
 	typedef uint64_t bsize;
 	bsize * destB      = (bsize *) &(dest[0]);
 	bsize * srcB       = (bsize *) &(src[0]);
@@ -389,10 +389,11 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	ctx->nextseqnr = seqnr + 1;
 	r = 0;
  out:
-	explicit_bzero(xorStream, sizeof(xorStream));
+	if (ctx == NULL)
+		fprintf(stderr,"CTX NULL!\n");
+	explicit_bzero(ctx->rcvbuf,
+	    (POLY1305_KEYLEN + len + aadlen) * sizeof(u_char));
 	explicit_bzero(expected_tag, sizeof(expected_tag));
-	explicit_bzero(poly_key, sizeof(poly_key));
-/*	dumphex("dest (AADLEN)", dest, AADLEN); */
 	return r;
 }
 
