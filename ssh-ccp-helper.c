@@ -131,11 +131,55 @@ int readBytes(u_char * result, size_t size, u_char textmode) {
 }
 
 int
-main(int argc, char ** argv) {
+gen(u_char * poly_key, u_char * xorStream, u_int seqnr,
+    EVP_CIPHER_CTX * main_evp, EVP_CIPHER_CTX * header_evp) {
 	u_char zeros[KEYSTREAMLEN + AADLEN];
+	u_char seqbuf[16];
+	int ret;
+
+	ret = 0;
+	memset(seqbuf, 0, sizeof(seqbuf));
+	memset(zeros, 0, sizeof(zeros));
+
+	POKE_U64(seqbuf + 8, seqnr);
+	memset(poly_key, 0, POLY1305_KEYLEN);
+
+	if (!EVP_CipherInit(main_evp, NULL, NULL, seqbuf, 1)) {
+		ret = 1;
+		goto out;
+	}
+	if (EVP_Cipher(main_evp, poly_key, poly_key, POLY1305_KEYLEN) < 0) {
+		ret = 1;
+		goto out;
+	}
+	if (!EVP_CipherInit(header_evp, NULL, NULL, seqbuf, 1)) {
+		ret = 1;
+		goto out;
+	}
+	if (EVP_Cipher(header_evp, xorStream, zeros, CHACHA_BLOCKLEN) < 0 ) {
+		ret = 1;
+		goto out;
+	}
+	seqbuf[0] = 1;
+	if (!EVP_CipherInit(main_evp, NULL, NULL, seqbuf, 1)) {
+		ret = 1;
+		goto out;
+	}
+	if (EVP_Cipher(main_evp, xorStream + AADLEN, zeros, KEYSTREAMLEN) < 0) {
+		ret = 1;
+		goto out;
+	}
+ out:
+	if (ret == 1)
+		err("failed in g.\n");
+	explicit_bzero(seqbuf, sizeof(seqbuf));
+	return ret;
+}
+
+int
+main(int argc, char ** argv) {
 	EVP_CIPHER_CTX * main_evp;
 	EVP_CIPHER_CTX * header_evp;
-	u_char seqbuf[16];
 	u_int seqnr;
 
 	u_char poly_key[POLY1305_KEYLEN];
@@ -152,7 +196,6 @@ main(int argc, char ** argv) {
 
 	u_char quitting;
 
-	memset(zeros,0,sizeof(zeros));
 	main_evp = NULL;
 	header_evp = NULL;
 
@@ -254,46 +297,8 @@ main(int argc, char ** argv) {
 			case 'g' :
 				/* genererate keystream */
 				err("received g\n");
-				memset(seqbuf,0,sizeof(seqbuf));
-				POKE_U64(seqbuf+8,seqnr);
-				memset(poly_key,0,sizeof(poly_key));
-				if(!EVP_CipherInit(main_evp, NULL, NULL, seqbuf,
-				    1)) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
-				if(EVP_Cipher(main_evp, poly_key, poly_key,
-				    sizeof(poly_key)) < 0) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
-				if(!EVP_CipherInit(header_evp, NULL, NULL,
-				    seqbuf, 1)) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
-				if(EVP_Cipher(header_evp, xorStream, zeros,
-				    CHACHA_BLOCKLEN) < 0 ) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
-				seqbuf[0] = 1;
-				if(!EVP_CipherInit(main_evp, NULL, NULL, seqbuf,
-				    1)) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
-				if(EVP_Cipher(main_evp, xorStream + AADLEN,
-				    zeros, KEYSTREAMLEN) < 0) {
-					err("failed in g.\n");
-					quitting=1;
-					break;
-				}
+				quitting = gen(poly_key, xorStream, seqnr,
+				    main_evp, header_evp);
 				break;
 			case 'p' :
 				/* read poly_key and keystream, then advance */
@@ -324,10 +329,11 @@ main(int argc, char ** argv) {
 					quitting = 1;
 				err("wrote xorStream\n");
 				if(cmd == 'p') {
-					/* queue generation of next keystream */
-					ungetc('g',stdin);
-					/* queue incrementing seqnr */
-					ungetc('n',stdin);
+					err("advancing seqnr\n");
+					seqnr += streams;
+					err("calling gen\n");
+					quitting = gen(poly_key, xorStream,
+					    seqnr, main_evp, header_evp);
 				}
 				break;
 			default :
@@ -345,7 +351,6 @@ main(int argc, char ** argv) {
 	err("cleaning up.\n");
 	EVP_CIPHER_CTX_free(main_evp);
 	EVP_CIPHER_CTX_free(header_evp);
-	explicit_bzero(seqbuf,sizeof(seqbuf));
 	explicit_bzero(poly_key,sizeof(poly_key));
 	explicit_bzero(headerkey,sizeof(headerkey));
 	explicit_bzero(mainkey,sizeof(mainkey));
