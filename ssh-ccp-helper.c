@@ -9,6 +9,7 @@
 #include "defines.h"
 #include "sshbuf.h"
 #include "cipher-chachapoly-forks.h"
+#include "ipc.h"
 
 /* #define DEBUGMODE */
 
@@ -19,6 +20,9 @@
 	#define err(fmt, args...)
 	#define dumphex(label, data, size)
 #endif
+
+struct smem * sharedmem;
+long guess;
 
 int _err(const char * restrict format, ...) {
 	va_list arg;
@@ -73,8 +77,15 @@ int readBinLoop(void * result, size_t size) {
 }
 
 int readInt(u_int * result, u_char textmode) {
-	if(!textmode) {
+	if (textmode == 0) {
 		return readBinLoop(result,sizeof(u_int));
+	} else if (textmode == 2) {
+		size_t size;
+		size = smem_nread_msg(sharedmem, result, sizeof(u_int));
+		if (size != 4)
+			return -1;
+		else
+			return 0;
 	} else {
 		char * linebuf = NULL;
 		size_t size;
@@ -96,6 +107,19 @@ int readInt(u_int * result, u_char textmode) {
 }
 
 int readChar(u_char * result, u_char textmode) {
+	if (textmode == 2) {
+		size_t size;
+
+		smem_gspinwait(sharedmem, 0, guess);
+		size = smem_nread_msg(sharedmem, result, sizeof(u_char));
+		if (size == 0) {
+			smem_signal(sharedmem, 1);
+			smem_gspinwait(sharedmem, 0, guess);
+			size = smem_nread_msg(sharedmem, result,
+				sizeof(u_char));
+		}
+		return 0;
+	}
 	if(read(STDIN_FILENO,result,sizeof(u_char)) != 1)
 		return -1;
 	if(textmode)
@@ -104,8 +128,15 @@ int readChar(u_char * result, u_char textmode) {
 }
 
 int readBytes(u_char * result, size_t size, u_char textmode) {
-	if(!textmode) {
+	if(textmode == 0) {
 		return readBinLoop(result, size*sizeof(u_char));
+	} else if (textmode == 2) {
+		size_t readsize;
+		readsize = smem_nread_msg(sharedmem, result, size);
+		if (readsize != size)
+			return -1;
+		else
+			return 0;
 	} else {
 		char * linebuf = NULL;
 		size_t linesize;
@@ -198,19 +229,21 @@ main(int argc, char ** argv) {
 
 	main_evp = NULL;
 	header_evp = NULL;
-
+	sharedmem = NULL;
+	guess = 1;
 
 	if(read(STDIN_FILENO,&textmode, sizeof(textmode)) != 1)
 		goto cleanup;
 	if(textmode == 'b' || textmode == 'B') {
 		textmode = 0;
+		err("mode: binary\n");
 	} else if (textmode == 't' || textmode == 'T') {
 		textmode = 1;
 		discard();
+		err("mode: text\n");
 	} else {
 		goto cleanup;
 	}
-	err("mode: %s\n",textmode ? "text" : "binary");
 
 	if(readInt(&streams, textmode))
 		goto cleanup;
@@ -264,6 +297,26 @@ main(int argc, char ** argv) {
 				err("received n\n");
 				seqnr += streams;
 				break;
+			case 'm' :
+				/* switch to shared-memory mode */
+				err("received m\n");
+				if (sharedmem != NULL)
+					break;
+				if (readInt(&param, textmode)) {
+					err("failed to read parameter.\n");
+					quitting = 1;
+					break;
+				}
+				sharedmem = smem_join(param);
+				if (sharedmem == NULL) {
+					err("failed to map shared memory.\n");
+					quitting = 1;
+					break;
+				}
+				err("switched to mem mode.\n");
+
+				textmode = 2;
+				break;
 			case 'd' :
 				err("received d\n");
 				ungetc('\n',stdin);
@@ -297,8 +350,14 @@ main(int argc, char ** argv) {
 			case 'g' :
 				/* genererate keystream */
 				err("received g\n");
-				quitting = gen(poly_key, xorStream, seqnr,
-				    main_evp, header_evp);
+				if (textmode == 2) {
+					quitting = gen(sharedmem->data,
+					    sharedmem->data + POLY1305_KEYLEN,
+					    seqnr, main_evp, header_evp);
+				}
+				else
+					quitting = gen(poly_key, xorStream,
+					    seqnr, main_evp, header_evp);
 				break;
 			case 'p' :
 				/* read poly_key and keystream, then advance */
@@ -356,4 +415,6 @@ main(int argc, char ** argv) {
 	explicit_bzero(mainkey,sizeof(mainkey));
 	explicit_bzero(xorStream,sizeof(xorStream));
 	explicit_bzero(&param,sizeof(param));
+	if (sharedmem != NULL)
+		smem_leave(sharedmem);
 }

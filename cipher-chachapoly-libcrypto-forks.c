@@ -38,6 +38,7 @@
 #include "cipher-chachapoly-forks.h"
 #include "cipher-pipes.h"
 #include "poly1305-opt.h"
+#include "ipc.h"
 
 #define READ_END 0
 #define WRITE_END 1
@@ -60,6 +61,7 @@ struct chachapolyf_ctx {
 	u_int numworkers;
 	int (* rpipes)[2];
 	int (* wpipes)[2];
+	struct smem ** smem;
 	u_int nextseqnr;
 	pid_t * pids;
 	u_char sndbuf[4096];
@@ -127,6 +129,30 @@ pr(struct chachapolyf_ctx * ctx, u_int worker, u_char * data, size_t size) {
 	return 0;
 }
 
+__attribute__((always_inline))
+static inline int
+pwm(struct chachapolyf_ctx * ctx, u_int worker, const u_char * data,
+    size_t size) {
+	return (smem_nwrite_msg(ctx->smem[worker], data, size) != size);
+}
+__attribute__((always_inline))
+static inline int
+pcwm(struct chachapolyf_ctx * ctx, u_int worker, u_char data) {
+	return (smem_nwrite_msg(ctx->smem[worker], &data, sizeof(u_char))
+	    != sizeof(u_char));
+}
+__attribute__((always_inline))
+static inline int
+piwm(struct chachapolyf_ctx * ctx, u_int worker, u_int data) {
+	return (smem_nwrite_msg(ctx->smem[worker], &data, sizeof(u_int))
+	    != sizeof(u_int));
+}
+__attribute__((always_inline))
+static inline int
+prm(struct chachapolyf_ctx * ctx, u_int worker, u_char * data, size_t size) {
+	return (smem_nread_msg(ctx->smem[worker], &data, size) != size);
+}
+
 
 struct chachapoly_ctx *
 chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
@@ -157,6 +183,9 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 	if ((ctx->wpipes = malloc(ctx->numworkers * sizeof(int[2]))) == NULL)
 		goto fail;
 	if ((ctx->pids = malloc(ctx->numworkers * sizeof(pid_t))) == NULL)
+		goto fail;
+	if ((ctx->smem = malloc(ctx->numworkers * sizeof(struct smem *)))
+	    == NULL)
 		goto fail;
 
 	if(allocCipherPipeSpace(ctx->numworkers * 2))
@@ -274,6 +303,42 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 			goto fail;
 		}
 	}
+
+	/* Switch to shared memory mode */
+	for (u_int i = 0; i < ctx->numworkers; i++) {
+		ctx->smem[i] = smem_create();
+		if (ctx->smem[i] == NULL) {
+			for (u_int j = 0; j < ctx->numworkers; j++) {
+				delCipherPipe(ctx->wpipes[j][WRITE_END]);
+				delCipherPipe(ctx->rpipes[j][READ_END]);
+				close(ctx->wpipes[j][WRITE_END]);
+				close(ctx->rpipes[j][READ_END]);
+			}
+			for (u_int j = 0; j < i; j++)
+				smem_free(ctx->smem[j]);
+			goto fail;
+		}
+		smem_signal(ctx->smem[i], 1);
+	}
+	for (u_int i = 0; i < ctx->numworkers; i++) {
+		smem_reset_msg(ctx->smem[i]);
+		if (pcw(ctx, i, 'm') ||
+		    piw(ctx, i, smem_getpath(ctx->smem[i]))) {
+			for (u_int j = 0; j < ctx->numworkers; j++) {
+				delCipherPipe(ctx->wpipes[j][WRITE_END]);
+				delCipherPipe(ctx->rpipes[j][READ_END]);
+				close(ctx->wpipes[j][WRITE_END]);
+				close(ctx->rpipes[j][READ_END]);
+				smem_free(ctx->smem[j]);
+			}
+			goto fail;
+		}
+		smem_signal(ctx->smem[i], 0);
+		smem_spinwait(ctx->smem[i], 1);
+		pcwm(ctx, i, 'g');
+		smem_signal(ctx->smem[i], 0);
+	}
+
 	return cp_ctx;
  fail:
 	if (ctx->rpipes != NULL)
@@ -296,15 +361,20 @@ chachapolyf_free(struct chachapoly_ctx *cpctx)
 	if (cpfctx != NULL) {
 		for (u_int i = 0; i < cpfctx->numworkers; i++) {
 /*				pcw(cpfctx, i, 'q');*/
+			smem_spinwait(cpfctx->smem[i], 1);
+			pcwm(cpfctx, i, 'q');
+			smem_signal(cpfctx->smem[i], 0);
 			delCipherPipe(cpfctx->wpipes[i][WRITE_END]);
 			delCipherPipe(cpfctx->rpipes[i][READ_END]);
 			close(cpfctx->wpipes[i][WRITE_END]);
 			close(cpfctx->rpipes[i][READ_END]);
 /*				waitpid(cpfctx->pids[i], NULL, 0);*/
+			smem_free(cpfctx->smem[i]);
 		}
 		free(cpfctx->rpipes);
 		free(cpfctx->wpipes);
 		free(cpfctx->pids);
+		free(cpfctx->smem);
 		freezero(cpfctx, sizeof(*cpfctx));
 	}
 	chachapoly_free(cpctx);
@@ -330,8 +400,9 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 	}
 	struct chachapolyf_ctx * ctx = cp_ctx->cpf_ctx;
 
-	u_char * poly_key = ctx->rcvbuf;
-	u_char * xorStream = &(ctx->rcvbuf[POLY1305_KEYLEN]);
+	u_char * poly_key = ctx->smem[seqnr % ctx->numworkers]->data;
+	u_char * xorStream = ctx->smem[seqnr % ctx->numworkers]->data +
+	    POLY1305_KEYLEN;
 
 	u_char expected_tag[POLY1305_TAGLEN];
 
@@ -341,19 +412,20 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 		ctx->sndbuf[5] = 'g';
 		for (u_int i = 0; i < ctx->numworkers; i++) {
 			PUT_UINT(&(ctx->sndbuf[1]), seqnr + i);
-			if (UNLIKELY(pw(ctx, (seqnr + i) % ctx->numworkers,
+			smem_spinwait(ctx->smem[(seqnr + i) % ctx->numworkers],
+			    1);
+			if (UNLIKELY(pwm(ctx, (seqnr + i) % ctx->numworkers,
 			    ctx->sndbuf, 6)))
 				goto out;
+			smem_signal(ctx->smem[(seqnr + i) % ctx->numworkers],
+			    0);
 		}
 		ctx->nextseqnr = seqnr;
 	}
 	ctx->sndbuf[0]='p';
 	PUT_UINT(&(ctx->sndbuf[1]), len);
-	if (UNLIKELY(pw(ctx, seqnr % ctx->numworkers, ctx->sndbuf, 5)))
-		goto out;
-	if (UNLIKELY(pr(ctx, seqnr % ctx->numworkers, ctx->rcvbuf,
-	    POLY1305_KEYLEN + AADLEN + len)))
-		goto out;
+//	fprintf(stderr,"Spinning %i\n", seqnr);
+	smem_spinwait(ctx->smem[seqnr % ctx->numworkers], 1);
 
 	/* If decrypting, check tag before anything else */
 	if (!do_encrypt) {
@@ -383,16 +455,16 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
-		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
-		     poly_key);
+//		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
+//		     poly_key);
 	}
 	ctx->nextseqnr = seqnr + 1;
+	pwm(ctx, seqnr % ctx->numworkers, "ng", 2);
+	smem_signal(ctx->smem[seqnr % ctx->numworkers], 0);
 	r = 0;
  out:
 	if (ctx == NULL)
 		fprintf(stderr,"CTX NULL!\n");
-	explicit_bzero(ctx->rcvbuf,
-	    (POLY1305_KEYLEN + len + aadlen) * sizeof(u_char));
 	explicit_bzero(expected_tag, sizeof(expected_tag));
 	return r;
 }
@@ -409,34 +481,33 @@ chachapolyf_get_length(struct chachapoly_ctx *cp_ctx,
 	struct chachapolyf_ctx * ctx = cp_ctx->cpf_ctx;
 
 	u_char buf[4];
-	u_char xorStream[4];
+/*	u_char xorStream[4];*/
+	u_char * xorStream = ctx->smem[seqnr % ctx->numworkers]->data +
+	    POLY1305_KEYLEN;
 
 	if (len < 4)
 		return SSH_ERR_MESSAGE_INCOMPLETE;
 
 	if (ctx->nextseqnr != seqnr) {
 		for (u_int i = 0; i < ctx->numworkers; i++) {
-			if (pcw(ctx, (seqnr + i) % ctx->numworkers, 's'))
+			smem_spinwait(ctx->smem[(seqnr + i) % ctx->numworkers],
+			    1);
+			if (pcwm(ctx, (seqnr + i) % ctx->numworkers, 's'))
 				return SSH_ERR_LIBCRYPTO_ERROR;
-			if (piw(ctx, (seqnr + i) % ctx->numworkers, seqnr + i))
+			if (piwm(ctx, (seqnr + i) % ctx->numworkers, seqnr + i))
 				return SSH_ERR_LIBCRYPTO_ERROR;
-			if (pcw(ctx, (seqnr + i) % ctx->numworkers, 'g'))
+			if (pcwm(ctx, (seqnr + i) % ctx->numworkers, 'g'))
 				return SSH_ERR_LIBCRYPTO_ERROR;
+			smem_signal(ctx->smem[(seqnr + i) % ctx->numworkers],
+			    0);
 		}
 		ctx->nextseqnr = seqnr;
 	}
-	
-	if (pcw(ctx, seqnr % ctx->numworkers, 'r') ||
-	    piw(ctx, seqnr % ctx->numworkers, 0) ||
-	    pr(ctx,seqnr % ctx->numworkers, xorStream, 4)) {
-		/* TODO: better error return value here */
-		return SSH_ERR_LIBCRYPTO_ERROR;
-	}
+	smem_spinwait(ctx->smem[seqnr % ctx->numworkers], 1);
 	for (u_int i = 0; i < sizeof(buf); i++)
 		buf[i] = xorStream[i] ^ cp[i];
 	*plenp = PEEK_U32(buf);
 	explicit_bzero(buf, sizeof(buf));
-	explicit_bzero(xorStream, sizeof(xorStream));
 	return 0;
 }
 #endif /* defined(HAVE_EVP_CHACHA20) && !defined(HAVE_BROKEN_CHACHA20) */

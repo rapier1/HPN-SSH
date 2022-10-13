@@ -250,8 +250,8 @@ hpnssh-pkcs11-helper$(EXEEXT): $(LIBCOMPAT) libssh.a $(P11HELPER_OBJS)
 hpnssh-sk-helper$(EXEEXT): $(LIBCOMPAT) libssh.a $(SKHELPER_OBJS)
 	$(LD) -o $@ $(SKHELPER_OBJS) $(LDFLAGS) -lssh -lopenbsd-compat -lssh -lopenbsd-compat $(LIBS) $(LIBFIDO2)
 
-hpnssh-chachapoly-helper$(EXEEXT): $(LIBCOMPAT) $(CCPHELPER_OBJS)
-	$(LD) -o $@ $(CCPHELPER_OBJS) $(LDFLAGS) $(LIBS)
+hpnssh-chachapoly-helper$(EXEEXT): $(LIBCOMPAT) libssh.a $(CCPHELPER_OBJS)
+	$(LD) -o $@ $(CCPHELPER_OBJS) $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
 
 hpnssh-keyscan$(EXEEXT): $(LIBCOMPAT) libssh.a $(SSHKEYSCAN_OBJS)
 	$(LD) -o $@ $(SSHKEYSCAN_OBJS) $(LDFLAGS) -lssh -lopenbsd-compat -lssh $(LIBS)
