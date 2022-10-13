@@ -455,8 +455,8 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
-//		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
-//		     poly_key);
+		poly1305_auth_opt(dest + aadlen + len, dest, aadlen + len,
+		     poly_key);
 	}
 	ctx->nextseqnr = seqnr + 1;
 	pwm(ctx, seqnr % ctx->numworkers, "ng", 2);
