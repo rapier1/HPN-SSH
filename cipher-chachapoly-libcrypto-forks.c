@@ -335,6 +335,7 @@ chachapolyf_new(struct chachapoly_ctx * oldctx, const u_char *key, u_int keylen)
 		}
 		smem_signal(ctx->smem[i], 0);
 		smem_spinwait(ctx->smem[i], 1);
+		smem_reset_msg(ctx->smem[i]);
 		pcwm(ctx, i, 'g');
 		smem_signal(ctx->smem[i], 0);
 	}
@@ -362,13 +363,14 @@ chachapolyf_free(struct chachapoly_ctx *cpctx)
 		for (u_int i = 0; i < cpfctx->numworkers; i++) {
 /*				pcw(cpfctx, i, 'q');*/
 			smem_spinwait(cpfctx->smem[i], 1);
+			smem_reset_msg(cpfctx->smem[i]);
 			pcwm(cpfctx, i, 'q');
 			smem_signal(cpfctx->smem[i], 0);
 			delCipherPipe(cpfctx->wpipes[i][WRITE_END]);
 			delCipherPipe(cpfctx->rpipes[i][READ_END]);
 			close(cpfctx->wpipes[i][WRITE_END]);
 			close(cpfctx->rpipes[i][READ_END]);
-/*				waitpid(cpfctx->pids[i], NULL, 0);*/
+			waitpid(cpfctx->pids[i], NULL, 0);
 			smem_free(cpfctx->smem[i]);
 		}
 		free(cpfctx->rpipes);
@@ -414,6 +416,8 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 			PUT_UINT(&(ctx->sndbuf[1]), seqnr + i);
 			smem_spinwait(ctx->smem[(seqnr + i) % ctx->numworkers],
 			    1);
+			smem_reset_msg(ctx->smem[(seqnr + i) %
+			    ctx->numworkers]);
 			if (UNLIKELY(pwm(ctx, (seqnr + i) % ctx->numworkers,
 			    ctx->sndbuf, 6)))
 				goto out;
@@ -459,6 +463,7 @@ chachapolyf_crypt(struct chachapoly_ctx *cp_ctx, u_int seqnr, u_char *dest,
 		     poly_key);
 	}
 	ctx->nextseqnr = seqnr + 1;
+	smem_reset_msg(ctx->smem[seqnr % ctx->numworkers]);
 	pwm(ctx, seqnr % ctx->numworkers, "ng", 2);
 	smem_signal(ctx->smem[seqnr % ctx->numworkers], 0);
 	r = 0;
@@ -492,6 +497,8 @@ chachapolyf_get_length(struct chachapoly_ctx *cp_ctx,
 		for (u_int i = 0; i < ctx->numworkers; i++) {
 			smem_spinwait(ctx->smem[(seqnr + i) % ctx->numworkers],
 			    1);
+			smem_reset_msg(ctx->smem[(seqnr + i) %
+			    ctx->numworkers]);
 			if (pcwm(ctx, (seqnr + i) % ctx->numworkers, 's'))
 				return SSH_ERR_LIBCRYPTO_ERROR;
 			if (piwm(ctx, (seqnr + i) % ctx->numworkers, seqnr + i))
