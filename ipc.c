@@ -9,17 +9,17 @@
 #include "misc.h"
 #include "sshbuf.h"
 
-#define SMEM_SIZE          (SSH_IOBUFSZ * 4)
-
-#define DATA_OFFSET        0
-#define SIGNAL_OFFSET      (SSH_IOBUFSZ * 2)
-#define RLEN_OFFSET        (SSH_IOBUFSZ * 3)
-#define WLEN_OFFSET        ((SSH_IOBUFSZ * 3) + 4)
-#define MESSAGE_OFFSET     ((SSH_IOBUFSZ * 3) + 8)
+struct smem_layout {
+	u_char data[(SSH_IOBUFSZ) * 2];
+	u_char message[SSH_IOBUFSZ];
+	u_char signal;
+	u_int  rlen;
+	u_int  wlen;
+};
 
 struct smem_internal {
 	u_int path;
-	volatile char * m;
+	volatile struct smem_layout * m;
 	volatile u_int * rlen;
 	volatile u_int * wlen;
 };
@@ -53,7 +53,7 @@ smem_create()
 		return NULL;
 	}
 
-	if(ftruncate(fd, SMEM_SIZE) != 0) {
+	if(ftruncate(fd, sizeof(struct smem_layout)) != 0) {
 		close(fd);
 		shm_unlink(pathstr);
 		free(s->internal);
@@ -61,8 +61,8 @@ smem_create()
 		return NULL;
 	}
 
-	s->internal->m = mmap(NULL, SMEM_SIZE, PROT_READ | PROT_WRITE,
-	    MAP_SHARED, fd, 0);
+	s->internal->m = mmap(NULL, sizeof(struct smem_layout),
+	    PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
 	if (s->internal->m == MAP_FAILED) {
 		shm_unlink(pathstr);
@@ -71,17 +71,17 @@ smem_create()
 		return NULL;
 	}
 
-	s->data = &(s->internal->m[DATA_OFFSET]);
-	s->signal = &(s->internal->m[SIGNAL_OFFSET]);
-	s->internal->rlen = (u_int *) &(s->internal->m[RLEN_OFFSET]);
-	s->internal->wlen = (u_int *) &(s->internal->m[WLEN_OFFSET]);
-	s->message = &(s->internal->m[MESSAGE_OFFSET]);
+	s->data = &(s->internal->m->data);
+	s->signal = &(s->internal->m->signal);
+	s->internal->rlen = &(s->internal->m->rlen);
+	s->internal->wlen = &(s->internal->m->wlen);
+	s->message = &(s->internal->m->message);
 
-	memset(s->data, 0, 2 * (SSH_IOBUFSZ));
-	memset(s->signal, 0, SSH_IOBUFSZ);
+	memset(s->data, 0, sizeof(s->internal->m->data));
+	memset(s->signal, 0, sizeof(s->internal->m->signal));
 	*(s->internal->rlen) = 0;
 	*(s->internal->wlen) = 0;
-	memset(s->message, 0, SSH_IOBUFSZ - 8);
+	memset(s->message, 0, sizeof(s->internal->m->message));
 
 	return s;
 }
@@ -93,8 +93,8 @@ smem_free(struct smem * s)
 
 	if (s == NULL)
 		return;
-	explicit_bzero(s->internal->m, SMEM_SIZE);
-	munmap(s->internal->m, SMEM_SIZE);
+	explicit_bzero(s->internal->m, sizeof(struct smem_layout));
+	munmap(s->internal->m, sizeof(struct smem_layout));
 	sprintf(pathstr, "/%08x", s->internal->path);
 	shm_unlink(pathstr);
 	free(s->internal);
@@ -133,7 +133,7 @@ smem_join(u_int num)
 		return NULL;
 	}
 
-	s->internal->m = mmap(NULL, SMEM_SIZE, PROT_READ | PROT_WRITE,
+	s->internal->m = mmap(NULL, sizeof(struct smem_layout), PROT_READ | PROT_WRITE,
 	    MAP_SHARED, fd, 0);
 	close(fd);
 	if (s->internal->m == MAP_FAILED) {
@@ -142,11 +142,11 @@ smem_join(u_int num)
 		return NULL;
 	}
 
-	s->data = &(s->internal->m[DATA_OFFSET]);
-	s->signal = &(s->internal->m[SIGNAL_OFFSET]);
-	s->internal->rlen = (u_int *) &(s->internal->m[RLEN_OFFSET]);
-	s->internal->wlen = (u_int *) &(s->internal->m[WLEN_OFFSET]);
-	s->message = &(s->internal->m[MESSAGE_OFFSET]);
+	s->data = &(s->internal->m->data);
+	s->signal = &(s->internal->m->signal);
+	s->internal->rlen = &(s->internal->m->rlen);
+	s->internal->wlen = &(s->internal->m->wlen);
+	s->message = &(s->internal->m->message);
 
 	return s;
 }
@@ -156,7 +156,7 @@ smem_leave(struct smem * s)
 {
 	if (s == NULL)
 		return;
-	munmap(s->internal->m, SMEM_SIZE);
+	munmap(s->internal->m, sizeof(struct smem_layout));
 	free(s->internal);
 	free(s);
 }
@@ -208,10 +208,8 @@ smem_dump(struct smem * s)
 		return;
 	}
 	fprintf(stderr, "Current status: \n");
-	fprintf(stderr, "    Signal: %hhu\n", *(s->signal));
-	fprintf(stderr, "    Message &RLEN: %p\n", s->internal->rlen);
+	fprintf(stderr, "    Signal: %u\n", *(s->signal));
 	fprintf(stderr, "    Message RLEN: %u\n", *(s->internal->rlen));
-	fprintf(stderr, "    Message &WLEN: %p\n", s->internal->wlen);
 	fprintf(stderr, "    Message WLEN: %u\n", *(s->internal->wlen));
 	fprintf(stderr, "    Message: %02x%02x%02x%02x%02x\n",
 	    s->message[8],

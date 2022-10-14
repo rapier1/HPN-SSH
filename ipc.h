@@ -6,9 +6,9 @@
 struct smem_internal;
 
 struct smem {
-	volatile char * signal;
-	volatile char * message;
-	volatile char * data;
+	volatile u_char * signal;
+	volatile u_char * message;
+	volatile u_char * data;
 	struct smem_internal * internal;
 };
 
