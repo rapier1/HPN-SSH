@@ -13,22 +13,20 @@ struct smem_layout {
 	u_char data[(SSH_IOBUFSZ) * 2];
 	u_char message[SSH_IOBUFSZ];
 	u_char signal;
-	u_int  rlen;
-	u_int  wlen;
+	size_t rpos;
+	size_t wpos;
 };
 
 struct smem_internal {
 	u_int path;
 	volatile struct smem_layout * m;
-	volatile u_int * rlen;
-	volatile u_int * wlen;
 };
 
 struct smem *
 smem_create()
 {
 	struct smem * s;
-	char pathstr[10];
+	char pathstr[18];
 	int fd;
 
 	s = malloc(sizeof(struct smem));
@@ -42,7 +40,7 @@ smem_create()
 
 	do {
 		s->internal->path = arc4random();
-		sprintf(pathstr, "/%08x", s->internal->path);
+		sprintf(pathstr, "/ssh-ipc-%08x", s->internal->path);
 		fd = shm_open(pathstr, O_RDWR | O_CREAT | O_EXCL,
 		    S_IRUSR | S_IWUSR);
 	} while ((fd == -1) && (errno == EEXIST));
@@ -71,17 +69,13 @@ smem_create()
 		return NULL;
 	}
 
-	s->data = &(s->internal->m->data);
-	s->signal = &(s->internal->m->signal);
-	s->internal->rlen = &(s->internal->m->rlen);
-	s->internal->wlen = &(s->internal->m->wlen);
-	s->message = &(s->internal->m->message);
+	memset(s->internal->m, 0, sizeof(s->internal->m));
+	s->internal->m->rpos = 0;
+	s->internal->m->wpos = 0;
 
-	memset(s->data, 0, sizeof(s->internal->m->data));
-	memset(s->signal, 0, sizeof(s->internal->m->signal));
-	*(s->internal->rlen) = 0;
-	*(s->internal->wlen) = 0;
-	memset(s->message, 0, sizeof(s->internal->m->message));
+	s->data = &(s->internal->m->data);
+	s->message = &(s->internal->m->message);
+	s->signal = &(s->internal->m->signal);
 
 	return s;
 }
@@ -89,13 +83,13 @@ smem_create()
 void
 smem_free(struct smem * s)
 {
-	char pathstr[10];
+	char pathstr[18];
 
 	if (s == NULL)
 		return;
 	explicit_bzero(s->internal->m, sizeof(struct smem_layout));
 	munmap(s->internal->m, sizeof(struct smem_layout));
-	sprintf(pathstr, "/%08x", s->internal->path);
+	sprintf(pathstr, "/ssh-ipc-%08x", s->internal->path);
 	shm_unlink(pathstr);
 	free(s->internal);
 	free(s);
@@ -111,7 +105,7 @@ struct smem *
 smem_join(u_int num)
 {
 	struct smem * s;
-	char pathstr[10];
+	char pathstr[18];
 	int fd;
 
 	s = malloc(sizeof(struct smem));
@@ -124,7 +118,7 @@ smem_join(u_int num)
 	}
 
 	s->internal->path = num;
-	sprintf(pathstr, "/%08x", s->internal->path);
+	sprintf(pathstr, "/ssh-ipc-%08x", s->internal->path);
 
 	fd = shm_open(pathstr, O_RDWR, S_IRUSR | S_IWUSR);
 	if (fd == -1) {
@@ -143,10 +137,8 @@ smem_join(u_int num)
 	}
 
 	s->data = &(s->internal->m->data);
-	s->signal = &(s->internal->m->signal);
-	s->internal->rlen = &(s->internal->m->rlen);
-	s->internal->wlen = &(s->internal->m->wlen);
 	s->message = &(s->internal->m->message);
+	s->signal = &(s->internal->m->signal);
 
 	return s;
 }
@@ -162,42 +154,63 @@ smem_leave(struct smem * s)
 }
 
 size_t
-smem_nread_msg(const struct smem * s, void * buf, const size_t n)
+smem_nread_msg(struct smem * s, void * buf, size_t n, u_char v)
 {
-	size_t m;
-	if ((s == NULL) || (buf == NULL) || (n == 0))
+	size_t ringsz, used, p1, p2;
+
+	if ((s == NULL) || (buf == NULL) || (n <= 0))
 		return 0;
-	if (n > (*(s->internal->wlen)) - (*(s->internal->rlen)))
-		m = (*(s->internal->wlen)) - (*(s->internal->rlen));
-	else
-		m = n;
-	memcpy(buf, s->message + (*(s->internal->rlen)), m);
-	*(s->internal->rlen) += m;
-	return m;
+
+	smem_spinwait(s, v);
+
+	ringsz = sizeof(s->internal->m->message);
+	used = (s->internal->m->wpos + ringsz - s->internal->m->rpos) % ringsz;
+
+	if (n > used)
+		return 0;
+
+	if (s->internal->m->rpos + n <= ringsz) {
+		memcpy(buf, s->internal->m->message + s->internal->m->rpos, n);
+		s->internal->m->rpos += n;
+	} else {
+		p1 = ringsz - s->internal->m->rpos;
+		p2 = n - p1;
+		memcpy(buf, s->internal->m->message + s->internal->m->rpos, p1);
+		memcpy(buf + p1, s->internal->m->message, p2);
+		s->internal->m->rpos = p2;
+	}
+
+	return n;
 }
 
 size_t
-smem_nwrite_msg(struct smem * s, const void * buf, const size_t n)
+smem_nwrite_msg(struct smem * s, const void * buf, size_t n, u_char v)
 {
-	size_t m;
-	if ((s == NULL) || (buf == NULL) || (n == 0))
-		return 0;
-	if (n > (SSH_IOBUFSZ - 8 - (*(s->internal->wlen))))
-		m = SSH_IOBUFSZ - 8 - (*(s->internal->wlen));
-	else
-		m = n;
-	memcpy(s->message + (*(s->internal->wlen)), buf, m);
-	*(s->internal->wlen) += m;
-	return m;
-}
+	size_t ringsz, used, p1, p2;
 
-void
-smem_reset_msg(struct smem * s)
-{
-	if (s == NULL)
-		return;
-	*(s->internal->rlen) = 0;
-	*(s->internal->wlen) = 0;
+	if ((s == NULL) || (buf == NULL) || (n <= 0))
+		return 0;
+
+	smem_spinwait(s, v);
+
+	ringsz = sizeof(s->internal->m->message);
+	used = (s->internal->m->wpos + ringsz - s->internal->m->rpos) % ringsz;
+
+	if (n > (ringsz - 1 - used))
+		return 0;
+	
+	if (s->internal->m->wpos + n <= ringsz) {
+		memcpy(s->internal->m->message + s->internal->m->wpos, buf, n);
+		s->internal->m->wpos += n;
+	} else {
+		p1 = ringsz - s->internal->m->wpos;
+		p2 = n - p1;
+		memcpy(s->internal->m->message + s->internal->m->wpos, buf, p1);
+		memcpy(s->internal->m->message, buf + p1, p2);
+		s->internal->m->wpos = p2;
+	}
+
+	return n;
 }
 
 void
@@ -209,8 +222,8 @@ smem_dump(struct smem * s)
 	}
 	fprintf(stderr, "Current status: \n");
 	fprintf(stderr, "    Signal: %u\n", *(s->signal));
-	fprintf(stderr, "    Message RLEN: %u\n", *(s->internal->rlen));
-	fprintf(stderr, "    Message WLEN: %u\n", *(s->internal->wlen));
+	fprintf(stderr, "    Message RLEN: %ld\n", s->internal->m->rpos);
+	fprintf(stderr, "    Message WLEN: %ld\n", s->internal->m->wpos);
 	fprintf(stderr, "    Message: %02x%02x%02x%02x%02x\n",
 	    s->message[8],
 	    s->message[9],

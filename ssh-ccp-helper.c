@@ -81,7 +81,7 @@ int readInt(u_int * result, u_char textmode) {
 		return readBinLoop(result,sizeof(u_int));
 	} else if (textmode == 2) {
 		size_t size;
-		size = smem_nread_msg(sharedmem, result, sizeof(u_int));
+		size = smem_nread_msg(sharedmem, result, sizeof(u_int), HELPSIG);
 		if (size != 4)
 			return -1;
 		else
@@ -110,13 +110,13 @@ int readChar(u_char * result, u_char textmode) {
 	if (textmode == 2) {
 		size_t size;
 
-		smem_gspinwait(sharedmem, 0, guess);
-		size = smem_nread_msg(sharedmem, result, sizeof(u_char));
+		guess = smem_gspinwait(sharedmem, 0, guess);
+		size = smem_nread_msg(sharedmem, result, sizeof(u_char), HELPSIG);
 		if (size == 0) {
 			smem_signal(sharedmem, 1);
-			smem_gspinwait(sharedmem, 0, guess);
+			guess = smem_gspinwait(sharedmem, 0, guess);
 			size = smem_nread_msg(sharedmem, result,
-				sizeof(u_char));
+				sizeof(u_char), HELPSIG);
 		}
 		return 0;
 	}
@@ -132,7 +132,7 @@ int readBytes(u_char * result, size_t size, u_char textmode) {
 		return readBinLoop(result, size*sizeof(u_char));
 	} else if (textmode == 2) {
 		size_t readsize;
-		readsize = smem_nread_msg(sharedmem, result, size);
+		readsize = smem_nread_msg(sharedmem, result, size, HELPSIG);
 		if (readsize != size)
 			return -1;
 		else
